@@ -80,6 +80,15 @@ async def resolve_domain(domain: str) -> dict:
             if mcp_configs:
                 data["claude_desktop_config"] = {"mcpServers": mcp_configs}
 
+        elif data.get("pending_providers"):
+            # No active MCPs but known providers exist
+            providers = [p.get("provider", "unknown") for p in data["pending_providers"]]
+            data["_ai_hint"] = (
+                f"This entity uses {', '.join(providers)} for bookings, but these providers "
+                "haven't joined Dock AI yet. Inform the user that direct MCP integration "
+                "is not available yet, but they can visit the provider's website directly."
+            )
+
         return data
 
 

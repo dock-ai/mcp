@@ -6,47 +6,38 @@ MCP server for [Dock AI](https://dockai.co) - discover MCP endpoints for real-wo
 
 This MCP server allows AI agents to discover which MCP servers can interact with a given entity (restaurant, hotel, salon, etc.) by querying the Dock AI registry.
 
-## Installation
+## Hosted Version
 
-```bash
-# Using uv (recommended)
-uv pip install dock-ai-mcp
-
-# Using pip
-pip install dock-ai-mcp
-```
-
-## Usage
-
-### Run the server
-
-```bash
-# Using uvx
-uvx dock-ai-mcp
-
-# Or if installed
-dock-ai-mcp
-```
-
-The server starts on `http://0.0.0.0:8080/mcp` (Streamable HTTP transport).
-
-### With Claude Desktop
-
-Add to your `claude_desktop_config.json`:
+Use the hosted version at `https://mcp.dockai.co/mcp` - no installation required.
 
 ```json
 {
   "mcpServers": {
     "dock-ai": {
-      "url": "http://localhost:8080/mcp"
+      "url": "https://mcp.dockai.co/mcp"
     }
   }
 }
 ```
 
-### With other MCP clients
+## Self-Hosting
 
-Connect to the MCP endpoint at `http://localhost:8080/mcp`.
+### Deploy to Vercel
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/dock-ai/mcp)
+
+### Run locally
+
+```bash
+# Using uvx
+uvx dock-ai-mcp
+
+# Or install and run
+pip install dock-ai-mcp
+dock-ai-mcp
+```
+
+The server starts on `http://0.0.0.0:8080/mcp`.
 
 ## Tools
 

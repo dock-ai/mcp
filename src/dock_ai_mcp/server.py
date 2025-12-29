@@ -51,7 +51,7 @@ async def resolve_domain(domain: str) -> dict:
 
 def main():
     """Entry point for the MCP server."""
-    mcp.run()
+    mcp.run(transport="http", host="0.0.0.0", port=8080)
 
 
 if __name__ == "__main__":

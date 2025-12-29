@@ -18,6 +18,18 @@ pip install dock-ai-mcp
 
 ## Usage
 
+### Run the server
+
+```bash
+# Using uvx
+uvx dock-ai-mcp
+
+# Or if installed
+dock-ai-mcp
+```
+
+The server starts on `http://0.0.0.0:8080/mcp` (Streamable HTTP transport).
+
 ### With Claude Desktop
 
 Add to your `claude_desktop_config.json`:
@@ -26,8 +38,7 @@ Add to your `claude_desktop_config.json`:
 {
   "mcpServers": {
     "dock-ai": {
-      "command": "uvx",
-      "args": ["dock-ai-mcp"]
+      "url": "http://localhost:8080/mcp"
     }
   }
 }
@@ -35,13 +46,7 @@ Add to your `claude_desktop_config.json`:
 
 ### With other MCP clients
 
-```bash
-# Run directly
-uvx dock-ai-mcp
-
-# Or if installed
-dock-ai-mcp
-```
+Connect to the MCP endpoint at `http://localhost:8080/mcp`.
 
 ## Tools
 

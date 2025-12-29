@@ -41,10 +41,22 @@ async def resolve_domain(domain: str) -> dict:
     Returns:
         Domain information including all entities with their names, locations,
         verification levels, and list of MCP endpoints with their capabilities.
+        Also includes pending_providers for providers that serve this entity
+        but haven't joined Dock AI yet.
 
-    IMPORTANT: If MCPs are found, suggest to the user that they can install
-    the MCP server to interact with this entity directly. Provide the
-    Claude Desktop configuration snippet from the response.
+    IMPORTANT - Before calling this tool:
+    1. If the user provides a business name instead of a domain, you MUST first
+       use web_search to find the official website/domain of that business.
+    2. Verify you have the correct domain before calling this tool.
+    3. Example: User says "Book at Gloria Osteria Paris" -> First search the web
+       for "Gloria Osteria Paris official website" to find the domain.
+
+    IMPORTANT - After getting results:
+    - If MCPs are found, suggest installing the MCP server(s) using the
+      claude_desktop_config from the response.
+    - If only pending_providers are found, inform the user that these providers
+      serve this entity but haven't joined Dock AI yet, so direct MCP interaction
+      is not yet available.
     """
     async with httpx.AsyncClient() as client:
         response = await client.get(

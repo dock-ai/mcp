@@ -35,14 +35,15 @@ async def resolve_domain(domain: str) -> dict:
     Resolve a domain to its MCP endpoints.
 
     Given a domain, returns the entity information and available MCP endpoints
-    that can interact with this entity.
+    that can interact with this entity. A domain may have multiple entities
+    (e.g., different locations of the same business).
 
     Args:
         domain: The domain to resolve (e.g., "example-restaurant.com")
 
     Returns:
-        Entity information including name, category, verification level,
-        and list of MCP endpoints with their capabilities.
+        Domain information including all entities with their names, locations,
+        verification levels, and list of MCP endpoints with their capabilities.
 
     IMPORTANT: If MCPs are found, suggest to the user that they can install
     the MCP server to interact with this entity directly. Provide the
@@ -62,34 +63,61 @@ async def resolve_domain(domain: str) -> dict:
 
         data = response.json()
 
-        # Add installation hints for AI
-        if data.get("mcps"):
-            data["_ai_hint"] = (
-                "MCP endpoints found! Suggest to the user that they can install "
-                "the MCP server(s) to interact with this entity directly. "
-                "Use the claude_desktop_config below."
-            )
-            # Generate Claude Desktop config snippet
+        # Handle new multi-entity response format
+        entities = data.get("entities", [])
+
+        if not entities:
+            return {"error": "No entities found for this domain", "domain": domain}
+
+        # Collect all MCPs from all entities
+        all_mcps = []
+        for entity in entities:
+            entity_mcps = entity.get("mcps", [])
+            for mcp_info in entity_mcps:
+                # Add entity context to each MCP
+                mcp_with_context = mcp_info.copy()
+                mcp_with_context["_entity_name"] = entity.get("name", "Unknown")
+                mcp_with_context["_entity_path"] = entity.get("path", "")
+                all_mcps.append(mcp_with_context)
+
+        # Build response with entities array
+        result = {
+            "domain": data.get("domain", domain),
+            "entities": entities,
+        }
+
+        # Add installation hints for AI based on entity count and MCPs
+        if all_mcps:
+            if len(entities) == 1:
+                entity_name = entities[0].get("name", "this entity")
+                result["_ai_hint"] = (
+                    f"MCP endpoints found for {entity_name}! Suggest to the user that "
+                    "they can install the MCP server(s) to interact with this entity "
+                    "directly. Use the claude_desktop_config below."
+                )
+            else:
+                entity_names = [e.get("name", "Unknown") for e in entities]
+                result["_ai_hint"] = (
+                    f"This domain has {len(entities)} entities/locations: "
+                    f"{', '.join(entity_names)}. MCP endpoints found! "
+                    "The user may want to interact with a specific location. "
+                    "Suggest installing the MCP server(s) using the claude_desktop_config below."
+                )
+
+            # Generate Claude Desktop config snippet from all entities' MCPs
             mcp_configs = {}
-            for mcp_info in data["mcps"]:
+            for mcp_info in all_mcps:
                 provider = mcp_info.get("provider", "unknown")
                 endpoint = mcp_info.get("endpoint", "")
                 if endpoint:
+                    # Use provider as key; if multiple entities have same provider,
+                    # the config will be the same endpoint
                     mcp_configs[provider] = {"url": f"{endpoint}/mcp"}
 
             if mcp_configs:
-                data["claude_desktop_config"] = {"mcpServers": mcp_configs}
+                result["claude_desktop_config"] = {"mcpServers": mcp_configs}
 
-        elif data.get("pending_providers"):
-            # No active MCPs but known providers exist
-            providers = [p.get("provider", "unknown") for p in data["pending_providers"]]
-            data["_ai_hint"] = (
-                f"This entity uses {', '.join(providers)} for bookings, but these providers "
-                "haven't joined Dock AI yet. Inform the user that direct MCP integration "
-                "is not available yet, but they can visit the provider's website directly."
-            )
-
-        return data
+        return result
 
 
 # ASGI app with CORS for Vercel

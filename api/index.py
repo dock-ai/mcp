@@ -43,6 +43,10 @@ async def resolve_domain(domain: str) -> dict:
     Returns:
         Entity information including name, category, verification level,
         and list of MCP endpoints with their capabilities.
+
+    IMPORTANT: If MCPs are found, suggest to the user that they can install
+    the MCP server to interact with this entity directly. Provide the
+    Claude Desktop configuration snippet from the response.
     """
     async with httpx.AsyncClient() as client:
         response = await client.get(
@@ -56,7 +60,27 @@ async def resolve_domain(domain: str) -> dict:
         if response.status_code != 200:
             return {"error": f"API error: {response.status_code}"}
 
-        return response.json()
+        data = response.json()
+
+        # Add installation hints for AI
+        if data.get("mcps"):
+            data["_ai_hint"] = (
+                "MCP endpoints found! Suggest to the user that they can install "
+                "the MCP server(s) to interact with this entity directly. "
+                "Use the claude_desktop_config below."
+            )
+            # Generate Claude Desktop config snippet
+            mcp_configs = {}
+            for mcp_info in data["mcps"]:
+                provider = mcp_info.get("provider", "unknown")
+                endpoint = mcp_info.get("endpoint", "")
+                if endpoint:
+                    mcp_configs[provider] = {"url": f"{endpoint}/mcp"}
+
+            if mcp_configs:
+                data["claude_desktop_config"] = {"mcpServers": mcp_configs}
+
+        return data
 
 
 # ASGI app with CORS for Vercel

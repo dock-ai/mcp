@@ -1,2 +1,4 @@
 fastmcp>=2.0.0
 httpx>=0.27.0
+upstash-ratelimit>=1.1.0
+upstash-redis>=1.0.0

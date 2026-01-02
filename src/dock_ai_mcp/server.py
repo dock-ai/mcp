@@ -136,12 +136,13 @@ async def resolve_domain(domain: str) -> dict:
                 },
                 "mistral_le_chat": {
                     "steps": [
-                        "Go to Settings → MCP Servers",
-                        "Click 'Add MCP Server'",
+                        "Click Intelligence → Connectors",
+                        "Click '+ Add Connector'",
+                        "Select 'Custom MCP Connector' tab",
                         f"Enter URL: {endpoints[0] if endpoints else ''}",
-                        "Click Save"
+                        "Click Connect"
                     ],
-                    "requires": "Premium plan"
+                    "requires": "All plans"
                 }
             }
 

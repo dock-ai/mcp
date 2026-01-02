@@ -36,7 +36,7 @@ mcp = FastMCP(
 )
 
 
-@mcp.tool
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
 async def resolve_domain(domain: str) -> dict:
     """
     Check if an MCP connector exists for a business domain.

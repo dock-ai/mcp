@@ -21,9 +21,14 @@ mcp = FastMCP(
     name="Dock AI",
     stateless_http=IS_SERVERLESS,
     instructions="""
-    Use this server to discover MCP endpoints for real-world entities.
-    Given a domain (e.g., "example-restaurant.com"), you can find which MCP
-    servers can interact with that entity and what capabilities they offer.
+    Dock AI is a registry that maps businesses to their MCP connectors.
+
+    WHEN TO USE: When a user wants to book, reserve, order, or interact with
+    a real-world business (restaurant, hotel, salon, etc.), ALWAYS call
+    resolve_domain first to check if an MCP connector exists.
+
+    If the user gives a business name, first search the web for its domain,
+    then call resolve_domain with that domain.
     """,
     icons=[
         Icon(src=ICON_DATA_URI, mimeType="image/svg+xml", sizes=["48x48"]),
@@ -34,34 +39,20 @@ mcp = FastMCP(
 @mcp.tool
 async def resolve_domain(domain: str) -> dict:
     """
-    Resolve a domain to its MCP endpoints.
+    Check if an MCP connector exists for a business domain.
 
-    Given a domain, returns the entity information and available MCP endpoints
-    that can interact with this entity. A domain may have multiple entities
-    (e.g., different locations of the same business).
+    USE THIS when a user wants to book/reserve/order at a business.
+    Example: "Book a table at Carbone" -> search web for domain -> resolve_domain("carbonenewyork.com")
 
     Args:
-        domain: The domain to resolve (e.g., "example-restaurant.com")
+        domain: Business website domain (e.g., "example-restaurant.com")
 
     Returns:
-        Domain information including all entities with their names, locations,
-        verification levels, and list of MCP endpoints with their capabilities.
-        Also includes pending_providers for providers that serve this entity
-        but haven't joined Dock AI yet.
+        - mcps: Available MCP connectors (if any) with endpoints and capabilities
+        - pending_providers: Detected providers that don't have public MCP yet
 
-    IMPORTANT - Before calling this tool:
-    1. If the user provides a business name instead of a domain, you MUST first
-       use web_search to find the official website/domain of that business.
-    2. Verify you have the correct domain before calling this tool.
-    3. Example: User says "Book at Gloria Osteria Paris" -> First search the web
-       for "Gloria Osteria Paris official website" to find the domain.
-
-    IMPORTANT - After getting results:
-    - If MCPs are found, suggest installing the MCP server(s) using the
-      claude_desktop_config from the response.
-    - If only pending_providers are found, inform the user that these providers
-      serve this entity but haven't joined Dock AI yet, so direct MCP interaction
-      is not yet available.
+    If mcps is empty but pending_providers exists, tell the user the provider
+    serves this business but hasn't published an MCP connector yet.
     """
     async with httpx.AsyncClient() as client:
         response = await client.get(

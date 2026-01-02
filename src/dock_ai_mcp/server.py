@@ -133,6 +133,15 @@ async def resolve_domain(domain: str) -> dict:
                         "Enter name and click Create"
                     ],
                     "requires": "Plus, Pro, or Business plan"
+                },
+                "mistral_le_chat": {
+                    "steps": [
+                        "Go to Settings → MCP Servers",
+                        "Click 'Add MCP Server'",
+                        f"Enter URL: {endpoints[0] if endpoints else ''}",
+                        "Click Save"
+                    ],
+                    "requires": "Premium plan"
                 }
             }
 

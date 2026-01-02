@@ -91,36 +91,21 @@ async def resolve_domain(domain: str) -> dict:
             "entities": entities,
         }
 
-        # Add installation hints for AI based on entity count and MCPs
+        # Add hint for AI based on entity count and MCPs
         if all_mcps:
             if len(entities) == 1:
                 entity_name = entities[0].get("name", "this entity")
                 result["_ai_hint"] = (
-                    f"MCP endpoints found for {entity_name}! Suggest to the user that "
-                    "they can install the MCP server(s) to interact with this entity "
-                    "directly. Use the claude_desktop_config below."
+                    f"MCP endpoints found for {entity_name}! "
+                    "You can connect to the MCP server(s) to interact with this entity directly."
                 )
             else:
                 entity_names = [e.get("name", "Unknown") for e in entities]
                 result["_ai_hint"] = (
                     f"This domain has {len(entities)} entities/locations: "
                     f"{', '.join(entity_names)}. MCP endpoints found! "
-                    "The user may want to interact with a specific location. "
-                    "Suggest installing the MCP server(s) using the claude_desktop_config below."
+                    "The user may want to interact with a specific location."
                 )
-
-            # Generate Claude Desktop config snippet from all entities' MCPs
-            mcp_configs = {}
-            for mcp_info in all_mcps:
-                provider = mcp_info.get("provider", "unknown")
-                endpoint = mcp_info.get("endpoint", "")
-                if endpoint:
-                    # Use provider as key; if multiple entities have same provider,
-                    # the config will be the same endpoint
-                    mcp_configs[provider] = {"url": f"{endpoint}/mcp"}
-
-            if mcp_configs:
-                result["claude_desktop_config"] = {"mcpServers": mcp_configs}
 
         return result
 

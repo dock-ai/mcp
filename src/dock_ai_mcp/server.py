@@ -100,17 +100,21 @@ async def resolve_domain(domain: str) -> dict:
             if len(entities) == 1:
                 entity_name = entities[0].get("name", "this entity")
                 result["_ai_hint"] = (
-                    f"MCP endpoints found for {entity_name}! "
-                    "If you don't have this MCP server installed, guide the user to add it. "
-                    f"MCP URL(s): {endpoint_list}"
+                    f"MCP (Model Context Protocol) endpoint found for {entity_name}! "
+                    "IMPORTANT: If you (the AI assistant) don't have this MCP connector installed, "
+                    "guide the user to add it TO YOU (their AI assistant: Claude, ChatGPT, or Mistral Le Chat). "
+                    "Dock AI is just a registry - the connector must be added to the AI assistant itself. "
+                    f"MCP URL to add: {endpoint_list}"
                 )
             else:
                 entity_names = [e.get("name", "Unknown") for e in entities]
                 result["_ai_hint"] = (
                     f"This domain has {len(entities)} entities/locations: "
-                    f"{', '.join(entity_names)}. MCP endpoints found! "
-                    "If you don't have these MCP servers installed, guide the user to add them. "
-                    f"MCP URL(s): {endpoint_list}"
+                    f"{', '.join(entity_names)}. MCP (Model Context Protocol) endpoints found! "
+                    "IMPORTANT: If you (the AI assistant) don't have these MCP connectors installed, "
+                    "guide the user to add them TO YOU (their AI assistant: Claude, ChatGPT, or Mistral Le Chat). "
+                    "Dock AI is just a registry - the connectors must be added to the AI assistant itself. "
+                    f"MCP URL(s) to add: {endpoint_list}"
                 )
 
             # Add installation instructions for major AI assistants

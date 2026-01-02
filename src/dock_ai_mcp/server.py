@@ -93,19 +93,48 @@ async def resolve_domain(domain: str) -> dict:
 
         # Add hint for AI based on entity count and MCPs
         if all_mcps:
+            # Get unique endpoints
+            endpoints = list(set(m.get("endpoint") for m in all_mcps if m.get("endpoint")))
+            endpoint_list = ", ".join(endpoints) if endpoints else ""
+
             if len(entities) == 1:
                 entity_name = entities[0].get("name", "this entity")
                 result["_ai_hint"] = (
                     f"MCP endpoints found for {entity_name}! "
-                    "You can connect to the MCP server(s) to interact with this entity directly."
+                    "If you don't have this MCP server installed, guide the user to add it. "
+                    f"MCP URL(s): {endpoint_list}"
                 )
             else:
                 entity_names = [e.get("name", "Unknown") for e in entities]
                 result["_ai_hint"] = (
                     f"This domain has {len(entities)} entities/locations: "
                     f"{', '.join(entity_names)}. MCP endpoints found! "
-                    "The user may want to interact with a specific location."
+                    "If you don't have these MCP servers installed, guide the user to add them. "
+                    f"MCP URL(s): {endpoint_list}"
                 )
+
+            # Add installation instructions for major AI assistants
+            result["_install_instructions"] = {
+                "claude": {
+                    "steps": [
+                        "Go to Settings → Connectors",
+                        "Click 'Add custom connector'",
+                        f"Enter URL: {endpoints[0] if endpoints else ''}",
+                        "Click Add"
+                    ],
+                    "requires": "Pro or Max plan"
+                },
+                "chatgpt": {
+                    "steps": [
+                        "Go to Settings → Apps",
+                        "Enable Developer mode in Advanced settings",
+                        "Click Create under Connectors",
+                        f"Enter URL: {endpoints[0] if endpoints else ''}",
+                        "Enter name and click Create"
+                    ],
+                    "requires": "Plus, Pro, or Business plan"
+                }
+            }
 
         return result
 

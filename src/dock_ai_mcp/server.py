@@ -23,12 +23,13 @@ mcp = FastMCP(
     instructions="""
     Dock AI is a registry that maps businesses to their MCP connectors.
 
-    WHEN TO USE: When a user wants to book, reserve, order, or interact with
-    a real-world business (restaurant, hotel, salon, etc.), ALWAYS call
-    resolve_domain first to check if an MCP connector exists.
+    WHEN TO USE: When a user mentions a business/brand by name and wants to:
+    - Shop, browse products, or buy something (e-commerce)
+    - Book, reserve, or order (restaurants, hotels, salons)
+    - Interact with any real-world business
 
-    If the user gives a business name, first search the web for its domain,
-    then call resolve_domain with that domain.
+    ALWAYS call resolve_domain first to check if an MCP connector exists.
+    If the user gives a business name, search the web for its domain first.
     """,
     icons=[
         Icon(src=ICON_DATA_URI, mimeType="image/svg+xml", sizes=["48x48"]),
@@ -41,18 +42,17 @@ async def resolve_domain(domain: str) -> dict:
     """
     Check if an MCP connector exists for a business domain.
 
-    USE THIS when a user wants to book/reserve/order at a business.
-    Example: "Book a table at Carbone" -> search web for domain -> resolve_domain("carbonenewyork.com")
+    USE THIS when a user wants to shop, book, or interact with a business.
+    Examples:
+    - "Find products on Gymshark" -> resolve_domain("gymshark.com")
+    - "Book a table at Carbone" -> resolve_domain("carbonenewyork.com")
 
     Args:
-        domain: Business website domain (e.g., "example-restaurant.com")
+        domain: Business website domain (e.g., "gymshark.com", "allbirds.com")
 
     Returns:
-        - mcps: Available MCP connectors (if any) with endpoints and capabilities
-        - pending_providers: Detected providers that don't have public MCP yet
-
-    If mcps is empty but pending_providers exists, tell the user the provider
-    serves this business but hasn't published an MCP connector yet.
+        - mcps: Available MCP connectors with endpoints and capabilities
+        - pending_providers: Providers without public MCP yet
     """
     async with httpx.AsyncClient() as client:
         response = await client.get(

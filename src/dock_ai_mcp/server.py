@@ -133,6 +133,7 @@ async def resolve_domain(
         response = await client.get(
             f"{API_BASE}/v1/resolve/domain/{domain}",
             timeout=10.0,
+            headers={"X-Source": "mcp"},
         )
 
         if response.status_code == 404:

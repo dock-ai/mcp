@@ -6,6 +6,8 @@ Allows AI agents to discover MCP endpoints for real-world entities.
 
 import os
 import httpx
+from typing import Annotated
+from pydantic import Field
 from fastmcp import FastMCP
 from mcp.types import Icon
 
@@ -37,8 +39,84 @@ mcp = FastMCP(
 )
 
 
+# ============== PROMPTS ==============
+
+@mcp.prompt()
+def discover_business(business_name: Annotated[str, Field(description="Name of the business to discover")]) -> str:
+    """Help discover MCP connectors for a business by name."""
+    return f"""I want to interact with {business_name}.
+
+Please:
+1. Search for their website domain
+2. Use resolve_domain to check if an MCP connector exists
+3. If found, tell me what actions are available (shopping, booking, etc.)
+4. If not found, let me know what providers might serve this business"""
+
+
+@mcp.prompt()
+def setup_connector() -> str:
+    """Guide for setting up MCP connectors in AI assistants."""
+    return """Please help me set up an MCP connector in my AI assistant.
+
+I need step-by-step instructions for:
+- Claude (Anthropic)
+- ChatGPT (OpenAI)
+- Le Chat (Mistral)
+
+The MCP server URL is: https://mcp.dockai.co"""
+
+
+# ============== RESOURCES ==============
+
+@mcp.resource("docs://getting-started")
+def getting_started_guide() -> str:
+    """Getting started guide for Dock AI."""
+    return """# Getting Started with Dock AI
+
+Dock AI is the first Entity Discovery Protocol (EDP) registry. It helps AI agents discover which MCP connectors can interact with real-world businesses.
+
+## How it works
+
+1. **User asks**: "Book a table at Septime Paris"
+2. **AI resolves**: Calls resolve_domain("septime-charonne.fr")
+3. **Dock AI returns**: MCP endpoint for ZenChef (booking provider)
+4. **AI connects**: Uses the MCP connector to make the booking
+
+## Available Tools
+
+- `resolve_domain`: Find MCP connectors for a business domain
+
+## Documentation
+
+Visit https://dockai.co/docs for full documentation.
+"""
+
+
+@mcp.resource("docs://supported-providers")
+def supported_providers() -> str:
+    """List of supported MCP providers."""
+    return """# Supported MCP Providers
+
+Dock AI indexes businesses served by these MCP providers:
+
+## E-commerce
+- Shopify Storefront MCP
+
+## Booking & Reservations
+- ZenChef (restaurants)
+- TheFork (restaurants)
+- More coming soon...
+
+## How to add your provider
+
+If you're an MCP provider, register at https://provider.dockai.co
+"""
+
+
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
-async def resolve_domain(domain: str) -> dict:
+async def resolve_domain(
+    domain: Annotated[str, Field(description="Business website domain without protocol (e.g., 'gymshark.com', 'allbirds.com', 'septime-charonne.fr')")]
+) -> dict:
     """
     Check if an MCP connector exists for a business domain.
 
@@ -46,9 +124,6 @@ async def resolve_domain(domain: str) -> dict:
     Examples:
     - "Find products on Gymshark" -> resolve_domain("gymshark.com")
     - "Book a table at Carbone" -> resolve_domain("carbonenewyork.com")
-
-    Args:
-        domain: Business website domain (e.g., "gymshark.com", "allbirds.com")
 
     Returns:
         - mcps: Available MCP connectors with endpoints and capabilities

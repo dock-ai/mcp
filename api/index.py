@@ -42,7 +42,9 @@ SERVER_CARD = {
         "endpoint": "/mcp"
     },
     "capabilities": {
-        "tools": {"listChanged": False}
+        "tools": {"listChanged": False},
+        "prompts": {"listChanged": False},
+        "resources": {"subscribe": False, "listChanged": False}
     },
     "authentication": {
         "required": False
@@ -51,6 +53,28 @@ SERVER_CARD = {
         {
             "name": "resolve_domain",
             "description": "Check if an MCP connector exists for a business domain. Use this when a user wants to shop, book, or interact with a business."
+        }
+    ],
+    "prompts": [
+        {
+            "name": "discover_business",
+            "description": "Help discover MCP connectors for a business by name"
+        },
+        {
+            "name": "setup_connector",
+            "description": "Guide for setting up MCP connectors in AI assistants"
+        }
+    ],
+    "resources": [
+        {
+            "uri": "docs://getting-started",
+            "name": "Getting Started Guide",
+            "description": "Getting started guide for Dock AI"
+        },
+        {
+            "uri": "docs://supported-providers",
+            "name": "Supported Providers",
+            "description": "List of supported MCP providers"
         }
     ]
 }

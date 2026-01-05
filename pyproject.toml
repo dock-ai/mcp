@@ -1,6 +1,6 @@
 [project]
 name = "dock-ai-mcp"
-version = "0.1.0"
+version = "1.0.0"
 description = "MCP server for Dock AI - resolve entities to MCP endpoints"
 readme = "README.md"
 requires-python = ">=3.10"

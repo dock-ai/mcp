@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "co.dockai/mcp",
+  "title": "Dock AI",
+  "version": "1.0.0",
+  "description": "Discover MCP endpoints for real-world entities by resolving business domains.",
+  "websiteUrl": "https://dockai.co",
+  "repository": {
+    "url": "https://github.com/dock-ai/mcp",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.dockai.co/mcp"
+    }
+  ]
+}

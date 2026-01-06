@@ -8,7 +8,7 @@ Requires OAuth 2.1 authentication via Supabase.
 import os
 import httpx
 from typing import Annotated
-from pydantic import Field
+from pydantic import Field, AnyHttpUrl
 from fastmcp import FastMCP, Context
 from fastmcp.server.auth import RemoteAuthProvider
 from fastmcp.server.auth.providers.jwt import JWTVerifier
@@ -36,8 +36,8 @@ token_verifier = JWTVerifier(
 # RemoteAuthProvider for Supabase OAuth 2.1 with Dynamic Client Registration
 supabase_auth = RemoteAuthProvider(
     token_verifier=token_verifier,
-    authorization_servers=[f"{SUPABASE_URL}/auth/v1"],
-    resource_server_url=MCP_BASE_URL,
+    authorization_servers=[AnyHttpUrl(f"{SUPABASE_URL}/auth/v1")],
+    resource_server_url=AnyHttpUrl(MCP_BASE_URL),
 ) if SUPABASE_URL and token_verifier else None
 
 mcp = FastMCP(

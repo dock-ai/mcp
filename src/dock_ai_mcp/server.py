@@ -18,7 +18,6 @@ from .oauth_provider import DockAIOAuthProvider
 # Environment variables
 API_BASE = os.environ.get("DOCKAI_API_URL", "https://api.dockai.co")
 INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY")
-JWT_SECRET = os.environ.get("JWT_SECRET")
 MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.dockai.co")
 
 # Dock AI icon (teal gradient with lightning bolt)
@@ -29,12 +28,12 @@ IS_SERVERLESS = os.environ.get("VERCEL") == "1"
 
 # OAuth 2.1 Authorization Server with DCR
 # All DB operations delegated to dockai-api
+# Uses Supabase token passthrough (no custom JWTs)
 oauth_provider = DockAIOAuthProvider(
     internal_api_key=INTERNAL_API_KEY,
-    jwt_secret=JWT_SECRET,
     api_base=API_BASE,
     base_url=MCP_BASE_URL,
-) if INTERNAL_API_KEY and JWT_SECRET else None
+) if INTERNAL_API_KEY else None
 
 mcp = FastMCP(
     name="Dock AI",

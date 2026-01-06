@@ -270,7 +270,6 @@ async def contact_business(
     REQUIREMENTS:
     - Call resolve_domain first to get the entity_id
     - The business must have a contact email available
-    - Rate limited: 5 emails per day per user, 1 email per day per business
 
     The business will receive your email and can reply directly to your email address.
     """

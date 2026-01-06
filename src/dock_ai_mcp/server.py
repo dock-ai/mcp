@@ -28,7 +28,6 @@ IS_SERVERLESS = os.environ.get("VERCEL") == "1"
 
 # OAuth 2.1 Authorization Server with DCR
 # All DB operations delegated to dockai-api
-# Uses Supabase token passthrough (no custom JWTs)
 oauth_provider = DockAIOAuthProvider(
     internal_api_key=INTERNAL_API_KEY,
     api_base=API_BASE,

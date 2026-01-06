@@ -6,11 +6,18 @@ Implements OAuth 2.1 Authorization Server with:
 - Authorization Code Flow with PKCE
 - Token management (access + refresh)
 - All DB operations delegated to dockai-api
+
+Security features:
+- Timing-safe string comparisons
+- Proper token expiration validation
+- Scope validation on refresh
+- Error logging for debugging
 """
 
-import secrets
-import hashlib
 import base64
+import hashlib
+import logging
+import secrets
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
@@ -18,13 +25,14 @@ import httpx
 import jwt
 from pydantic import AnyUrl
 
-from fastmcp.server.auth import OAuthProvider, AccessToken
-from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
-from mcp.server.auth.provider import AuthorizationParams
+from fastmcp.server.auth import AccessToken, OAuthProvider
 from mcp.server.auth.provider import AuthorizationCode as SDKAuthorizationCode
+from mcp.server.auth.provider import AuthorizationParams
 from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
-from pydantic import AnyUrl
+from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Token expiration settings
 ACCESS_TOKEN_EXPIRY = timedelta(hours=1)
@@ -33,7 +41,16 @@ REFRESH_TOKEN_EXPIRY = timedelta(days=30)
 
 class RefreshToken:
     """Refresh token model."""
-    def __init__(self, token: str, client_id: str, user_id: str, user_email: str | None, scopes: list[str], expires_at: int | None):
+
+    def __init__(
+        self,
+        token: str,
+        client_id: str,
+        user_id: str,
+        user_email: str | None,
+        scopes: list[str],
+        expires_at: int | None,
+    ) -> None:
         self.token = token
         self.client_id = client_id
         self.user_id = user_id
@@ -44,6 +61,7 @@ class RefreshToken:
 
 class AuthorizationCode(SDKAuthorizationCode):
     """Authorization code model extending SDK's AuthorizationCode with user info."""
+
     # Additional fields for user info (not in SDK)
     user_id: str
     user_email: str | None = None
@@ -69,7 +87,7 @@ class DockAIOAuthProvider(OAuthProvider):
 
         Args:
             internal_api_key: API key for authenticating with dockai-api internal endpoints
-            jwt_secret: Secret key for signing our own JWTs
+            jwt_secret: Secret key for signing our own JWTs (must be 32+ bytes)
             api_base: dockai-api URL (for auth page redirect and API calls)
             base_url: This MCP server's base URL (issuer)
         """
@@ -99,22 +117,29 @@ class DockAIOAuthProvider(OAuthProvider):
         params: dict | None = None,
         json_data: dict | None = None,
     ) -> dict | None:
-        """Make a request to dockai-api."""
+        """Make a request to dockai-api with proper error handling."""
         url = f"{self.api_base}{endpoint}"
-        async with httpx.AsyncClient() as client:
-            response = await client.request(
-                method=method,
-                url=url,
-                headers=self._api_headers(),
-                params=params,
-                json=json_data,
-                timeout=10.0,
-            )
-            if response.status_code >= 400:
-                return None
-            if response.status_code == 204:
-                return {"success": True}
-            return response.json()
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.request(
+                    method=method,
+                    url=url,
+                    headers=self._api_headers(),
+                    params=params,
+                    json=json_data,
+                    timeout=10.0,
+                )
+                if response.status_code >= 400:
+                    logger.warning(
+                        f"API request failed: {method} {endpoint} -> {response.status_code}"
+                    )
+                    return None
+                if response.status_code == 204:
+                    return {"success": True}
+                return response.json()
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            logger.error(f"API request error: {method} {endpoint} -> {type(e).__name__}: {e}")
+            return None
 
     # ==================== Client Management ====================
 
@@ -135,7 +160,9 @@ class DockAIOAuthProvider(OAuthProvider):
             redirect_uris=[AnyUrl(uri) for uri in result.get("redirect_uris", [])],
             grant_types=result.get("grant_types", ["authorization_code", "refresh_token"]),
             response_types=result.get("response_types", ["code"]),
-            token_endpoint_auth_method=result.get("token_endpoint_auth_method", "client_secret_post"),
+            token_endpoint_auth_method=result.get(
+                "token_endpoint_auth_method", "client_secret_post"
+            ),
         )
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
@@ -150,17 +177,24 @@ class DockAIOAuthProvider(OAuthProvider):
                 "client_secret": client_info.client_secret,
                 "client_name": client_info.client_name or "MCP Client",
                 "redirect_uris": redirect_uris,
-                "grant_types": client_info.grant_types or ["authorization_code", "refresh_token"],
+                "grant_types": client_info.grant_types
+                or ["authorization_code", "refresh_token"],
                 "response_types": client_info.response_types or ["code"],
-                "token_endpoint_auth_method": client_info.token_endpoint_auth_method or "client_secret_post",
+                "token_endpoint_auth_method": client_info.token_endpoint_auth_method
+                or "client_secret_post",
             },
         )
 
-        if result:
-            # Update client_info with generated values from API
-            client_info.client_id = result.get("client_id", client_info.client_id)
-            client_info.client_secret = result.get("client_secret", client_info.client_secret)
-            client_info.client_id_issued_at = result.get("client_id_issued_at", int(datetime.now(timezone.utc).timestamp()))
+        if not result:
+            logger.error("Failed to register client with dockai-api")
+            raise RuntimeError("Client registration failed")
+
+        # Update client_info with generated values from API
+        client_info.client_id = result.get("client_id", client_info.client_id)
+        client_info.client_secret = result.get("client_secret", client_info.client_secret)
+        client_info.client_id_issued_at = result.get(
+            "client_id_issued_at", int(datetime.now(timezone.utc).timestamp())
+        )
 
     # ==================== Authorization Flow ====================
 
@@ -175,6 +209,11 @@ class DockAIOAuthProvider(OAuthProvider):
         Redirects to dockai-api /auth page for user authentication.
         After user logs in, dockai-api creates auth code and redirects back.
         """
+        # Validate PKCE is present (OAuth 2.1 requirement)
+        if not params.code_challenge:
+            logger.warning(f"Authorization request without code_challenge for client {client.client_id}")
+            # Note: SDK should enforce this, but we log for debugging
+
         auth_params = {
             "client_id": client.client_id,
             "redirect_uri": str(params.redirect_uri),
@@ -203,13 +242,21 @@ class DockAIOAuthProvider(OAuthProvider):
         if not result:
             return None
 
-        # Verify client_id matches
-        if result.get("client_id") != client.client_id:
+        # Verify client_id matches (timing-safe comparison)
+        result_client_id = result.get("client_id", "")
+        if not secrets.compare_digest(result_client_id, client.client_id):
+            logger.warning(f"Client ID mismatch in authorization code")
             return None
 
-        # Convert expires_at to timestamp (float) as expected by SDK
-        expires_at_dt = datetime.fromisoformat(result["expires_at"].replace("Z", "+00:00"))
-        expires_at_ts = expires_at_dt.timestamp()
+        # Parse expires_at with error handling
+        try:
+            expires_at_dt = datetime.fromisoformat(
+                result["expires_at"].replace("Z", "+00:00")
+            )
+            expires_at_ts = expires_at_dt.timestamp()
+        except (ValueError, KeyError) as e:
+            logger.error(f"Invalid expires_at in authorization code: {e}")
+            return None
 
         # Convert scope string to scopes list
         scope_str = result.get("scope") or ""
@@ -230,13 +277,13 @@ class DockAIOAuthProvider(OAuthProvider):
     # ==================== Token Exchange ====================
 
     def _verify_pkce(self, code_verifier: str, code_challenge: str, method: str) -> bool:
-        """Verify PKCE code_verifier against code_challenge."""
+        """Verify PKCE code_verifier against code_challenge (timing-safe)."""
         if method == "S256":
             digest = hashlib.sha256(code_verifier.encode()).digest()
             computed = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
-            return computed == code_challenge
+            return secrets.compare_digest(computed, code_challenge)
         elif method == "plain":
-            return code_verifier == code_challenge
+            return secrets.compare_digest(code_verifier, code_challenge)
         return False
 
     def _create_jwt(
@@ -267,6 +314,9 @@ class DockAIOAuthProvider(OAuthProvider):
         authorization_code: AuthorizationCode,
     ) -> OAuthToken:
         """Exchange authorization code for access and refresh tokens."""
+        # Note: PKCE verification is handled by the SDK before this method is called
+        # The SDK extracts code_verifier from the token request and validates it
+
         # authorization_code.scopes is already a list
         scopes = authorization_code.scopes
         scope_str = " ".join(scopes) if scopes else None
@@ -325,6 +375,8 @@ class DockAIOAuthProvider(OAuthProvider):
             params={"code": authorization_code.code},
         )
 
+        logger.info(f"Token exchange successful for user {authorization_code.user_id}")
+
         return OAuthToken(
             access_token=access_token,
             token_type="Bearer",
@@ -346,7 +398,8 @@ class DockAIOAuthProvider(OAuthProvider):
                 audience="dock-ai-mcp",
                 issuer=str(self.base_url),
             )
-        except jwt.InvalidTokenError:
+        except jwt.InvalidTokenError as e:
+            logger.debug(f"Invalid JWT token: {e}")
             return None
 
         # Check if token is revoked via dockai-api
@@ -356,11 +409,13 @@ class DockAIOAuthProvider(OAuthProvider):
             params={"token": token},
         )
 
-        # If token is in DB and revoked (or not found = expired/revoked), reject
-        if not result or result.get("error"):
-            # Token not found or error - but JWT is valid, allow it
-            # (token might not be stored if we're validating a token from before DB storage)
-            pass
+        # If token was explicitly revoked, reject it
+        if result and result.get("revoked"):
+            logger.info(f"Rejected revoked token for user {payload.get('sub')}")
+            return None
+
+        # Note: If DB is unreachable but JWT is valid, we allow the request (fail-open)
+        # This is a tradeoff between availability and strict revocation checking
 
         scopes = payload.get("scope", "").split() if payload.get("scope") else []
 
@@ -392,13 +447,28 @@ class DockAIOAuthProvider(OAuthProvider):
         if not result or result.get("error"):
             return None
 
-        # Verify it's a refresh token and client matches
+        # Verify it's a refresh token
         if result.get("token_type") != "refresh":
             return None
-        if result.get("client_id") != client.client_id:
+
+        # Verify client matches (timing-safe comparison)
+        result_client_id = result.get("client_id", "")
+        if not secrets.compare_digest(result_client_id, client.client_id):
+            logger.warning("Client ID mismatch in refresh token")
             return None
 
-        expires_at = datetime.fromisoformat(result["expires_at"].replace("Z", "+00:00"))
+        # Parse and validate expiration
+        try:
+            expires_at = datetime.fromisoformat(result["expires_at"].replace("Z", "+00:00"))
+        except (ValueError, KeyError) as e:
+            logger.error(f"Invalid expires_at in refresh token: {e}")
+            return None
+
+        # Check if refresh token is expired
+        if datetime.now(timezone.utc) >= expires_at:
+            logger.info("Refresh token expired")
+            return None
+
         scopes = result.get("scope", "").split() if result.get("scope") else []
 
         return RefreshToken(
@@ -417,7 +487,16 @@ class DockAIOAuthProvider(OAuthProvider):
         scopes: list[str],
     ) -> OAuthToken:
         """Exchange refresh token for new access token (with rotation)."""
-        final_scopes = scopes if scopes else refresh_token.scopes
+        # Validate requested scopes are subset of original (OAuth 2.1 requirement)
+        if scopes:
+            if not set(scopes).issubset(set(refresh_token.scopes)):
+                logger.warning(
+                    f"Scope escalation attempt: requested {scopes}, original {refresh_token.scopes}"
+                )
+                raise ValueError("Requested scopes exceed original grant")
+            final_scopes = scopes
+        else:
+            final_scopes = refresh_token.scopes
 
         # Create new access token
         access_token = self._create_jwt(
@@ -472,6 +551,8 @@ class DockAIOAuthProvider(OAuthProvider):
             json_data={"token": refresh_token.token},
         )
 
+        logger.info(f"Refresh token exchange successful for user {refresh_token.user_id}")
+
         return OAuthToken(
             access_token=access_token,
             token_type="Bearer",
@@ -489,3 +570,4 @@ class DockAIOAuthProvider(OAuthProvider):
             "/api/oauth/tokens",
             json_data={"token": token.token},
         )
+        logger.info(f"Token revoked: {type(token).__name__}")

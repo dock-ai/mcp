@@ -5,7 +5,6 @@ Imports from the main server module and adds CORS + Rate Limiting middleware.
 """
 
 import sys
-import json
 from pathlib import Path
 
 # Add src/ to Python path for Vercel
@@ -53,6 +52,10 @@ SERVER_CARD = {
         {
             "name": "resolve_domain",
             "description": "Check if an MCP connector exists for a business domain. Use this when a user wants to shop, book, or interact with a business."
+        },
+        {
+            "name": "contact_business",
+            "description": "Send an email to a business. Requires authentication and entity_id from resolve_domain."
         }
     ],
     "prompts": [

@@ -1,11 +1,30 @@
 """
 Rate limiting middleware using Upstash Redis.
+
+Security features:
+- IP spoofing protection (trusts x-real-ip from Vercel edge)
+- Graceful degradation on Redis failures
+- Logging for monitoring and debugging
 """
 
+import hashlib
+import logging
 import os
+import sys
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+# Rate limit configuration from environment
+RATE_LIMIT_MAX = int(os.environ.get("RATE_LIMIT_MAX_REQUESTS", "100"))
+RATE_LIMIT_WINDOW = int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "60"))
+
+# Paths that bypass rate limiting
+WHITELISTED_PATHS = {"/health", "/.well-known/mcp.json"}
 
 
 def get_rate_limiter():
@@ -14,36 +33,66 @@ def get_rate_limiter():
     token = os.environ.get("UPSTASH_REDIS_REST_TOKEN")
 
     if not url or not token:
+        logger.info("Rate limiting disabled: UPSTASH_REDIS_* not configured")
         return None
 
     try:
-        from upstash_ratelimit import Ratelimit, FixedWindow
+        from upstash_ratelimit import FixedWindow, Ratelimit
         from upstash_redis import Redis
 
         redis = Redis(url=url, token=token)
-        return Ratelimit(
+        limiter = Ratelimit(
             redis=redis,
-            limiter=FixedWindow(max_requests=100, window=60),  # 100 req/min per IP
+            limiter=FixedWindow(max_requests=RATE_LIMIT_MAX, window=RATE_LIMIT_WINDOW),
             prefix="mcp_ratelimit",
         )
-    except Exception:
+        logger.info(f"Rate limiting enabled: {RATE_LIMIT_MAX} req/{RATE_LIMIT_WINDOW}s")
+        return limiter
+    except Exception as e:
+        logger.error(f"Failed to initialize rate limiter: {e}")
         return None
 
 
 def get_client_ip(request: Request) -> str:
-    """Extract client IP from request headers."""
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    """
+    Extract client IP from request headers securely.
+
+    On Vercel, x-real-ip is set by the edge and cannot be spoofed.
+    Falls back to x-forwarded-for only if x-vercel-id is present (trusted proxy).
+    """
+    # Vercel sets x-real-ip at the edge - most secure
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+
+    # Only trust x-forwarded-for if request comes from Vercel edge
+    if request.headers.get("x-vercel-id"):
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            # First IP is the original client
+            return forwarded.split(",")[0].strip()
+
+    # Direct connection (local dev)
+    if request.client and request.client.host:
+        return request.client.host
+
+    # Fallback: generate fingerprint to avoid shared quota attack
+    fingerprint_data = (
+        f"{request.headers.get('user-agent', '')}"
+        f"{request.headers.get('accept-language', '')}"
+        f"{request.headers.get('accept-encoding', '')}"
+    )
+    fingerprint = hashlib.sha256(fingerprint_data.encode()).hexdigest()[:16]
+    return f"unknown-{fingerprint}"
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Middleware to enforce rate limiting."""
+    """Middleware to enforce rate limiting with proper security."""
 
     def __init__(self, app, limiter=None):
         super().__init__(app)
         self.limiter = limiter
+        self.limit_value = RATE_LIMIT_MAX
 
     async def dispatch(self, request: Request, call_next):
         # Skip rate limiting if not configured
@@ -54,13 +103,29 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
+        # Skip whitelisted paths
+        if request.url.path in WHITELISTED_PATHS:
+            return await call_next(request)
+
         # Get client identifier
         client_ip = get_client_ip(request)
 
         # Check rate limit
         try:
             result = self.limiter.limit(client_ip)
+
+            # Add rate limit headers to all responses
+            response = await call_next(request)
+            response.headers["X-RateLimit-Limit"] = str(self.limit_value)
+            response.headers["X-RateLimit-Remaining"] = str(
+                getattr(result, "remaining", max(0, self.limit_value - 1))
+            )
+            response.headers["X-RateLimit-Reset"] = str(getattr(result, "reset", 60))
+
             if not result.allowed:
+                logger.warning(
+                    f"Rate limit exceeded for {client_ip} on {request.url.path}"
+                )
                 return JSONResponse(
                     status_code=429,
                     content={
@@ -69,13 +134,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     },
                     headers={
                         "Retry-After": str(result.reset),
-                        "X-RateLimit-Limit": "100",
+                        "X-RateLimit-Limit": str(self.limit_value),
                         "X-RateLimit-Remaining": "0",
                         "X-RateLimit-Reset": str(result.reset),
                     },
                 )
-        except Exception:
-            # If rate limiting fails, allow the request (fail open)
-            pass
 
-        return await call_next(request)
+            return response
+
+        except Exception as e:
+            # Log the error for monitoring, but fail open
+            logger.error(
+                f"Rate limiting failed: {type(e).__name__}: {e}",
+                extra={
+                    "client_ip": client_ip,
+                    "path": request.url.path,
+                },
+            )
+            # Fail open - allow request if rate limiting fails
+            return await call_next(request)

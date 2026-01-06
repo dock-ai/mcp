@@ -10,11 +10,13 @@ import httpx
 from typing import Annotated
 from pydantic import Field
 from fastmcp import FastMCP, Context
-from fastmcp.server.auth.providers.supabase import SupabaseProvider
+from fastmcp.server.auth import RemoteAuthProvider
+from fastmcp.server.auth.providers.jwt import JWTVerifier
 from mcp.types import Icon
 
+# Environment variables (no hardcoded URLs)
 API_BASE = os.environ.get("DOCKAI_API_URL", "https://api.dockai.co")
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://bjwonnvxsjrixrgqeuge.supabase.co")
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
 MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.dockai.co")
 
 # Dock AI icon (teal gradient with lightning bolt)
@@ -23,22 +25,30 @@ ICON_DATA_URI = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiI
 # Check if running in serverless mode (Vercel sets VERCEL=1)
 IS_SERVERLESS = os.environ.get("VERCEL") == "1"
 
-# OAuth 2.1 authentication via Supabase
-supabase_auth = SupabaseProvider(
-    project_url=SUPABASE_URL,
-    base_url=MCP_BASE_URL,
-    algorithm="HS256",  # Supabase uses HS256 by default
-)
+# OAuth 2.1 authentication via Supabase with DCR support
+# JWT verification via Supabase JWKS endpoint
+token_verifier = JWTVerifier(
+    jwks_uri=f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json",
+    issuer=f"{SUPABASE_URL}/auth/v1",
+    audience="authenticated",
+) if SUPABASE_URL else None
+
+# RemoteAuthProvider for Supabase OAuth 2.1 with Dynamic Client Registration
+supabase_auth = RemoteAuthProvider(
+    token_verifier=token_verifier,
+    authorization_servers=[f"{SUPABASE_URL}/auth/v1"],
+    resource_server_url=MCP_BASE_URL,
+) if SUPABASE_URL and token_verifier else None
 
 mcp = FastMCP(
     name="Dock AI",
-    auth=supabase_auth,  # Require OAuth authentication
+    auth=supabase_auth,  # Require OAuth authentication (None if SUPABASE_URL not set)
     stateless_http=IS_SERVERLESS,
     instructions="""
     Dock AI is a registry that maps businesses to their MCP connectors.
 
-    AUTHENTICATION REQUIRED: You must authenticate with Supabase to use this MCP.
-    Go to https://dockai.co/auth to get started.
+    AUTHENTICATION REQUIRED: You must authenticate to use this MCP.
+    Go to https://api.dockai.co/auth to get started.
 
     WHEN TO USE: When a user mentions a business/brand by name and wants to:
     - Shop, browse products, or buy something (e-commerce)

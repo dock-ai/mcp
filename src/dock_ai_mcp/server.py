@@ -37,7 +37,7 @@ token_verifier = JWTVerifier(
 supabase_auth = RemoteAuthProvider(
     token_verifier=token_verifier,
     authorization_servers=[AnyHttpUrl(f"{SUPABASE_URL}/auth/v1")],
-    resource_server_url=AnyHttpUrl(MCP_BASE_URL),
+    base_url=MCP_BASE_URL,  # Your MCP server base URL for metadata
 ) if SUPABASE_URL and token_verifier else None
 
 mcp = FastMCP(

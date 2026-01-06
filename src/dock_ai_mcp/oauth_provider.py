@@ -333,7 +333,7 @@ class DockAIOAuthProvider(OAuthProvider):
             params={"code": authorization_code.code},
         )
 
-        logger.info(f"Token exchange successful for user {authorization_code.user_id}")
+        logger.info(f"Token exchange successful for user {authorization_code.user_id[:8]}...")
 
         return OAuthToken(
             access_token=access_token,
@@ -469,7 +469,7 @@ class DockAIOAuthProvider(OAuthProvider):
             logger.error(f"Token refresh failed: {error_msg}")
             raise RuntimeError(f"Token refresh failed: {error_msg}")
 
-        logger.info(f"Refresh token exchange successful for user {refresh_token.user_id}")
+        logger.info(f"Refresh token exchange successful for user {refresh_token.user_id[:8]}...")
 
         return OAuthToken(
             access_token=result["access_token"],

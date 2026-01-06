@@ -9,7 +9,8 @@ import os
 import httpx
 from typing import Annotated
 from pydantic import Field
-from fastmcp import FastMCP, Context
+from fastmcp import FastMCP
+from fastmcp.server.dependencies import get_access_token
 from mcp.types import Icon
 
 from .oauth_provider import DockAIOAuthProvider
@@ -141,7 +142,6 @@ If you're an MCP provider, register at https://provider.dockai.co
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
 async def resolve_domain(
     domain: Annotated[str, Field(description="Business website domain without protocol (e.g., 'gymshark.com', 'allbirds.com', 'septime-charonne.fr')")],
-    ctx: Context,
 ) -> dict:
     """
     Check if an MCP connector exists for a business domain.
@@ -155,10 +155,11 @@ async def resolve_domain(
         - mcps: Available MCP connectors with endpoints and capabilities
         - pending_providers: Providers without public MCP yet
     """
-    # Get auth token from context
+    # Get auth token from FastMCP dependency
     auth_token = None
-    if ctx.request_context and ctx.request_context.access_token:
-        auth_token = ctx.request_context.access_token.token
+    access_token = get_access_token()
+    if access_token:
+        auth_token = access_token.token
 
     async with httpx.AsyncClient() as client:
         headers = {"X-Source": "mcp"}
@@ -257,12 +258,11 @@ async def resolve_domain(
         return result
 
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": False})
 async def contact_business(
     entity_id: Annotated[str, Field(description="The entity ID (UUID) from resolve_domain response")],
     subject: Annotated[str, Field(description="Email subject line")],
     message: Annotated[str, Field(description="Email message body")],
-    ctx: Context,
 ) -> dict:
     """
     Send an email to a business. The email will be sent from Dock AI with your email as reply-to.
@@ -274,16 +274,17 @@ async def contact_business(
 
     The business will receive your email and can reply directly to your email address.
     """
-    # Get auth token from context
-    if not ctx.request_context or not ctx.request_context.access_token:
+    # Get auth token from FastMCP dependency
+    access_token = get_access_token()
+    if not access_token:
         return {"error": "Authentication required", "success": False}
 
-    auth_token = ctx.request_context.access_token.token
+    auth_token = access_token.token
 
     # Get user email from token claims
     user_email = None
-    if ctx.request_context.access_token.claims:
-        user_email = ctx.request_context.access_token.claims.get("email")
+    if access_token.claims:
+        user_email = access_token.claims.get("email")
 
     if not user_email:
         return {"error": "User email not found in token", "success": False}

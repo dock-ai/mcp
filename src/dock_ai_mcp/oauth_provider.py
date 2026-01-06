@@ -92,7 +92,7 @@ class DockAIOAuthProvider(OAuthProvider):
         self.internal_api_key = internal_api_key
         self.jwt_secret = jwt_secret
         self.api_base = api_base
-        self.base_url = base_url
+        # Note: self.base_url is set by parent class as AnyHttpUrl
 
     def _api_headers(self) -> dict[str, str]:
         """Headers for dockai-api internal calls."""
@@ -189,7 +189,7 @@ class DockAIOAuthProvider(OAuthProvider):
             "redirect_uri": str(params.redirect_uri),
             "code_challenge": params.code_challenge,
             "code_challenge_method": "S256",
-            "mcp_callback": f"{self.base_url}/oauth/callback",
+            "mcp_callback": f"{str(self.base_url)}/oauth/callback",
         }
         if params.state:
             auth_params["state"] = params.state
@@ -257,7 +257,7 @@ class DockAIOAuthProvider(OAuthProvider):
             "email": user_email,
             "client_id": client_id,
             "scope": " ".join(scopes),
-            "iss": self.base_url,
+            "iss": str(self.base_url),
             "aud": "dock-ai-mcp",
             "iat": int(now.timestamp()),
             "exp": int((now + expires_in).timestamp()),
@@ -345,7 +345,7 @@ class DockAIOAuthProvider(OAuthProvider):
                 self.jwt_secret,
                 algorithms=["HS256"],
                 audience="dock-ai-mcp",
-                issuer=self.base_url,
+                issuer=str(self.base_url),
             )
         except jwt.InvalidTokenError:
             return None

@@ -131,7 +131,8 @@ async def resolve_domain(
     """
     async with httpx.AsyncClient() as client:
         response = await client.get(
-            f"{API_BASE}/v1/resolve/domain/{domain}",
+            f"{API_BASE}/api/v1/resolve",
+            params={"domain": domain},
             timeout=10.0,
             headers={"X-Source": "mcp"},
         )
@@ -144,87 +145,79 @@ async def resolve_domain(
 
         data = response.json()
 
-        # Handle new multi-entity response format
-        entities = data.get("entities", [])
+        # Handle response format from dockai-api
+        entity = data.get("entity")
+        connectors = data.get("connectors", [])
 
-        if not entities:
-            return {"error": "No entities found for this domain", "domain": domain}
+        if not entity:
+            return {"error": "No entity found for this domain", "domain": domain}
 
-        # Collect all MCPs from all entities
-        all_mcps = []
-        for entity in entities:
-            entity_mcps = entity.get("mcps", [])
-            for mcp_info in entity_mcps:
-                # Add entity context to each MCP
-                mcp_with_context = mcp_info.copy()
-                mcp_with_context["_entity_name"] = entity.get("name", "Unknown")
-                mcp_with_context["_entity_path"] = entity.get("path", "")
-                all_mcps.append(mcp_with_context)
-
-        # Build response with entities array
+        # Build response with entity and connectors
         result = {
-            "domain": data.get("domain", domain),
-            "entities": entities,
+            "domain": domain,
+            "entity": entity,
+            "connectors": connectors,
         }
 
-        # Add hint for AI based on entity count and MCPs
-        if all_mcps:
+        # Find connectors with MCP endpoints
+        mcps = [c for c in connectors if c.get("status") == "connected"]
+
+        # Add hint for AI if MCP endpoints are available
+        if mcps:
             # Get unique endpoints
-            endpoints = list(set(m.get("endpoint") for m in all_mcps if m.get("endpoint")))
+            endpoints = list(set(m.get("mcp_endpoint") for m in mcps if m.get("mcp_endpoint")))
             endpoint_list = ", ".join(endpoints) if endpoints else ""
 
-            if len(entities) == 1:
-                entity_name = entities[0].get("name", "this entity")
-                result["_ai_hint"] = (
-                    f"MCP (Model Context Protocol) endpoint found for {entity_name}! "
-                    "IMPORTANT: If you (the AI assistant) don't have this MCP connector installed, "
-                    "guide the user to add it TO YOU (their AI assistant: Claude, ChatGPT, or Mistral Le Chat). "
-                    "Dock AI is just a registry - the connector must be added to the AI assistant itself. "
-                    f"MCP URL to add: {endpoint_list}"
-                )
-            else:
-                entity_names = [e.get("name", "Unknown") for e in entities]
-                result["_ai_hint"] = (
-                    f"This domain has {len(entities)} entities/locations: "
-                    f"{', '.join(entity_names)}. MCP (Model Context Protocol) endpoints found! "
-                    "IMPORTANT: If you (the AI assistant) don't have these MCP connectors installed, "
-                    "guide the user to add them TO YOU (their AI assistant: Claude, ChatGPT, or Mistral Le Chat). "
-                    "Dock AI is just a registry - the connectors must be added to the AI assistant itself. "
-                    f"MCP URL(s) to add: {endpoint_list}"
-                )
+            entity_name = entity.get("name", "this business")
+            result["_ai_hint"] = (
+                f"MCP (Model Context Protocol) endpoint found for {entity_name}! "
+                "IMPORTANT: If you (the AI assistant) don't have this MCP connector installed, "
+                "guide the user to add it TO YOU (their AI assistant: Claude, ChatGPT, or Mistral Le Chat). "
+                "Dock AI is just a registry - the connector must be added to the AI assistant itself. "
+                f"MCP URL to add: {endpoint_list}"
+            )
 
             # Add installation instructions for major AI assistants
-            result["_install_instructions"] = {
-                "claude": {
-                    "steps": [
-                        "Go to Settings → Connectors",
-                        "Click 'Add custom connector'",
-                        f"Enter URL: {endpoints[0] if endpoints else ''}",
-                        "Click Add"
-                    ],
-                    "requires": "Pro or Max plan"
-                },
-                "chatgpt": {
-                    "steps": [
-                        "Go to Settings → Apps",
-                        "Enable Developer mode in Advanced settings",
-                        "Click Create under Connectors",
-                        f"Enter URL: {endpoints[0] if endpoints else ''}",
-                        "Enter name and click Create"
-                    ],
-                    "requires": "Plus, Pro, or Business plan"
-                },
-                "mistral_le_chat": {
-                    "steps": [
-                        "Click Intelligence → Connectors",
-                        "Click '+ Add Connector'",
-                        "Select 'Custom MCP Connector' tab",
-                        f"Enter URL: {endpoints[0] if endpoints else ''}",
-                        "Click Connect"
-                    ],
-                    "requires": "All plans"
+            if endpoints:
+                result["_install_instructions"] = {
+                    "claude": {
+                        "steps": [
+                            "Go to Settings → Connectors",
+                            "Click 'Add custom connector'",
+                            f"Enter URL: {endpoints[0]}",
+                            "Click Add"
+                        ],
+                        "requires": "Pro or Max plan"
+                    },
+                    "chatgpt": {
+                        "steps": [
+                            "Go to Settings → Apps",
+                            "Enable Developer mode in Advanced settings",
+                            "Click Create under Connectors",
+                            f"Enter URL: {endpoints[0]}",
+                            "Enter name and click Create"
+                        ],
+                        "requires": "Plus, Pro, or Business plan"
+                    },
+                    "mistral_le_chat": {
+                        "steps": [
+                            "Click Intelligence → Connectors",
+                            "Click '+ Add Connector'",
+                            "Select 'Custom MCP Connector' tab",
+                            f"Enter URL: {endpoints[0]}",
+                            "Click Connect"
+                        ],
+                        "requires": "All plans"
+                    }
                 }
-            }
+        elif connectors:
+            # Connectors detected but none have MCP endpoints yet
+            connector_names = [c.get("name", c.get("slug")) for c in connectors]
+            result["_ai_hint"] = (
+                f"This business uses: {', '.join(connector_names)}. "
+                "However, these providers don't have MCP connectors available yet. "
+                "Dock AI is tracking them for future integration."
+            )
 
         return result
 

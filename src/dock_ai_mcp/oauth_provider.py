@@ -21,6 +21,7 @@ from pydantic import AnyUrl
 from fastmcp.server.auth import OAuthProvider, AccessToken
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from mcp.server.auth.provider import AuthorizationParams
+from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
 
 
 # Token expiration settings
@@ -88,7 +89,13 @@ class DockAIOAuthProvider(OAuthProvider):
             api_base: dockai-api URL (for auth page redirect and API calls)
             base_url: This MCP server's base URL (issuer)
         """
-        super().__init__(base_url=base_url)
+        super().__init__(
+            base_url=base_url,
+            # Enable Dynamic Client Registration (DCR) - required for MCP clients
+            client_registration_options=ClientRegistrationOptions(enabled=True),
+            # Enable token revocation
+            revocation_options=RevocationOptions(enabled=True),
+        )
         self.internal_api_key = internal_api_key
         self.jwt_secret = jwt_secret
         self.api_base = api_base

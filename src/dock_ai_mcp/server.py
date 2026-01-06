@@ -2,16 +2,20 @@
 Dock AI MCP Server
 
 Allows AI agents to discover MCP endpoints for real-world entities.
+Requires OAuth 2.1 authentication via Supabase.
 """
 
 import os
 import httpx
 from typing import Annotated
 from pydantic import Field
-from fastmcp import FastMCP
+from fastmcp import FastMCP, Context
+from fastmcp.server.auth.providers.supabase import SupabaseProvider
 from mcp.types import Icon
 
-API_BASE = "https://api.dockai.co"
+API_BASE = os.environ.get("DOCKAI_API_URL", "https://api.dockai.co")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://bjwonnvxsjrixrgqeuge.supabase.co")
+MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.dockai.co")
 
 # Dock AI icon (teal gradient with lightning bolt)
 ICON_DATA_URI = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTEiIGZpbGw9InVybCgjcGFpbnQwX2xpbmVhcl8xXzUpIi8+CjxwYXRoIGQ9Ik0xNC4yMjU5IDI2LjM5OTRDMTMuOTk0NyAyNi40MDAxIDEzLjc2OCAyNi4zMzY1IDEzLjU3MjIgMjYuMjE1OEMxMy4zNzY0IDI2LjA5NTEgMTMuMjE5NSAyNS45MjIzIDEzLjExOTcgMjUuNzE3NUMxMy4wMTk5IDI1LjUxMjggMTIuOTgxMyAyNS4yODQ0IDEzLjAwODQgMjUuMDU4OUMxMy4wMzU2IDI0LjgzMzUgMTMuMTI3MyAyNC42MjAyIDEzLjI3MyAyNC40NDM5TDI1LjM2ODQgMTIuMjA3MUMyNS40NTkxIDEyLjEwNDIgMjUuNTgyNyAxMi4wMzQ3IDI1LjcxOSAxMi4wMUMyNS44NTUyIDExLjk4NTMgMjUuOTk2IDEyLjAwNjcgMjYuMTE4MiAxMi4wNzA5QzI2LjI0MDQgMTIuMTM1MSAyNi4zMzY3IDEyLjIzODEgMjYuMzkxNCAxMi4zNjMyQzI2LjQ0NjEgMTIuNDg4MiAyNi40NTU4IDEyLjYyNzcgMjYuNDE5MSAxMi43NTg5TDI0LjA3MzMgMTkuOTgxQzI0LjAwNDEgMjAuMTYyOCAyMy45ODA5IDIwLjM1ODQgMjQuMDA1NiAyMC41NTA5QzI0LjAzMDMgMjAuNzQzNCAyNC4xMDIyIDIwLjkyNzIgMjQuMjE1MSAyMS4wODY1QzI0LjMyODEgMjEuMjQ1NyAyNC40Nzg3IDIxLjM3NTcgMjQuNjU0IDIxLjQ2NTNDMjQuODI5MyAyMS41NTQ4IDI1LjAyNDEgMjEuNjAxMyAyNS4yMjE4IDIxLjYwMDZIMzMuNzc0MUMzNC4wMDUzIDIxLjU5OTkgMzQuMjMyIDIxLjY2MzUgMzQuNDI3OCAyMS43ODQyQzM0LjYyMzYgMjEuOTA0OSAzNC43ODA1IDIyLjA3NzcgMzQuODgwMyAyMi4yODI1QzM0Ljk4MDEgMjIuNDg3MiAzNS4wMTg3IDIyLjcxNTYgMzQuOTkxNiAyMi45NDExQzM0Ljk2NDQgMjMuMTY2NSAzNC44NzI3IDIzLjM3OTggMzQuNzI3IDIzLjU1NjFMMjIuNjMxNiAzNS43OTI5QzIyLjU0MDkgMzUuODk1OCAyMi40MTczIDM1Ljk2NTMgMjIuMjgxIDM1Ljk5QzIyLjE0NDggMzYuMDE0NyAyMi4wMDQgMzUuOTkzMyAyMS44ODE4IDM1LjkyOTFDMjEuNzU5NiAzNS44NjQ5IDIxLjY2MzMgMzUuNzYxOSAyMS42MDg2IDM1LjYzNjhDMjEuNTUzOSAzNS41MTE4IDIxLjU0NDIgMzUuMzcyMyAyMS41ODA5IDM1LjI0MTFMMjMuOTI2NyAyOC4wMTlDMjMuOTk1OSAyNy44MzcyIDI0LjAxOTEgMjcuNjQxNiAyMy45OTQ0IDI3LjQ0OTFDMjMuOTY5NyAyNy4yNTY2IDIzLjg5NzggMjcuMDcyOCAyMy43ODQ5IDI2LjkxMzVDMjMuNjcxOSAyNi43NTQzIDIzLjUyMTMgMjYuNjI0MyAyMy4zNDYgMjYuNTM0N0MyMy4xNzA3IDI2LjQ0NTIgMjIuOTc1OSAyNi4zOTg3IDIyLjc3ODIgMjYuMzk5NEgxNC4yMjU5WiIgZmlsbD0id2hpdGUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CjxkZWZzPgo8bGluZWFyR3JhZGllbnQgaWQ9InBhaW50MF9saW5lYXJfMV81IiB4MT0iNy41IiB5MT0iNy41IiB4Mj0iMzciIHkyPSI0MS41IiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+CjxzdG9wIHN0b3AtY29sb3I9IiMwRDk0ODgiLz4KPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMTRCOEE2Ii8+CjwvbGluZWFyR3JhZGllbnQ+CjwvZGVmcz4KPC9zdmc+Cg=="
@@ -19,16 +23,32 @@ ICON_DATA_URI = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiI
 # Check if running in serverless mode (Vercel sets VERCEL=1)
 IS_SERVERLESS = os.environ.get("VERCEL") == "1"
 
+# OAuth 2.1 authentication via Supabase
+supabase_auth = SupabaseProvider(
+    project_url=SUPABASE_URL,
+    base_url=MCP_BASE_URL,
+    algorithm="HS256",  # Supabase uses HS256 by default
+)
+
 mcp = FastMCP(
     name="Dock AI",
+    auth=supabase_auth,  # Require OAuth authentication
     stateless_http=IS_SERVERLESS,
     instructions="""
     Dock AI is a registry that maps businesses to their MCP connectors.
+
+    AUTHENTICATION REQUIRED: You must authenticate with Supabase to use this MCP.
+    Go to https://dockai.co/auth to get started.
 
     WHEN TO USE: When a user mentions a business/brand by name and wants to:
     - Shop, browse products, or buy something (e-commerce)
     - Book, reserve, or order (restaurants, hotels, salons)
     - Interact with any real-world business
+    - Contact a business directly
+
+    AVAILABLE TOOLS:
+    - resolve_domain: Find MCP connectors for a business domain
+    - contact_business: Send an email to a business (requires entity to have contact email)
 
     ALWAYS call resolve_domain first to check if an MCP connector exists.
     If the user gives a business name, search the web for its domain first.
@@ -115,7 +135,8 @@ If you're an MCP provider, register at https://provider.dockai.co
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
 async def resolve_domain(
-    domain: Annotated[str, Field(description="Business website domain without protocol (e.g., 'gymshark.com', 'allbirds.com', 'septime-charonne.fr')")]
+    domain: Annotated[str, Field(description="Business website domain without protocol (e.g., 'gymshark.com', 'allbirds.com', 'septime-charonne.fr')")],
+    ctx: Context,
 ) -> dict:
     """
     Check if an MCP connector exists for a business domain.
@@ -129,12 +150,21 @@ async def resolve_domain(
         - mcps: Available MCP connectors with endpoints and capabilities
         - pending_providers: Providers without public MCP yet
     """
+    # Get auth token from context
+    auth_token = None
+    if ctx.request_context and ctx.request_context.access_token:
+        auth_token = ctx.request_context.access_token.token
+
     async with httpx.AsyncClient() as client:
+        headers = {"X-Source": "mcp"}
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+
         response = await client.get(
             f"{API_BASE}/api/v1/resolve",
             params={"domain": domain},
             timeout=10.0,
-            headers={"X-Source": "mcp"},
+            headers=headers,
         )
 
         if response.status_code == 404:
@@ -220,6 +250,85 @@ async def resolve_domain(
             )
 
         return result
+
+
+@mcp.tool()
+async def contact_business(
+    entity_id: Annotated[str, Field(description="The entity ID (UUID) from resolve_domain response")],
+    subject: Annotated[str, Field(description="Email subject line")],
+    message: Annotated[str, Field(description="Email message body")],
+    ctx: Context,
+) -> dict:
+    """
+    Send an email to a business. The email will be sent from Dock AI with your email as reply-to.
+
+    REQUIREMENTS:
+    - Call resolve_domain first to get the entity_id
+    - The business must have a contact email available
+    - Rate limited: 5 emails per day per user, 1 email per day per business
+
+    The business will receive your email and can reply directly to your email address.
+    """
+    # Get auth token from context
+    if not ctx.request_context or not ctx.request_context.access_token:
+        return {"error": "Authentication required", "success": False}
+
+    auth_token = ctx.request_context.access_token.token
+
+    # Get user email from token claims
+    user_email = None
+    if ctx.request_context.access_token.claims:
+        user_email = ctx.request_context.access_token.claims.get("email")
+
+    if not user_email:
+        return {"error": "User email not found in token", "success": False}
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{API_BASE}/api/v1/contact-business",
+            json={
+                "entity_id": entity_id,
+                "subject": subject,
+                "message": message,
+            },
+            headers={
+                "Authorization": f"Bearer {auth_token}",
+                "Content-Type": "application/json",
+                "X-Source": "mcp",
+            },
+            timeout=30.0,
+        )
+
+        if response.status_code == 401:
+            return {"error": "Authentication failed", "success": False}
+
+        if response.status_code == 404:
+            return {"error": "Entity not found", "success": False}
+
+        if response.status_code == 422:
+            data = response.json()
+            return {
+                "error": data.get("error", "Business has no contact email"),
+                "entity_name": data.get("entity_name"),
+                "success": False,
+            }
+
+        if response.status_code == 429:
+            return {
+                "error": "Rate limit exceeded. Try again later.",
+                "success": False,
+            }
+
+        if response.status_code != 200:
+            return {"error": f"API error: {response.status_code}", "success": False}
+
+        data = response.json()
+        return {
+            "success": True,
+            "message": data.get("message", "Email sent successfully"),
+            "entity": data.get("entity"),
+            "_ai_hint": f"Email sent to {data.get('entity', {}).get('name', 'the business')}. They will receive your message and can reply directly to {user_email}.",
+        }
 
 
 def main():

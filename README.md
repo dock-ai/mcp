@@ -46,9 +46,11 @@ The server starts on `http://0.0.0.0:8080/mcp`.
 Check if an MCP connector exists for a business domain.
 
 **Input:**
+
 - `domain` (string): The business domain to resolve (e.g., "example-restaurant.com")
 
 **Output:**
+
 ```json
 {
   "domain": "example-restaurant.com",

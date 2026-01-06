@@ -5,6 +5,7 @@ All notable changes to the Dock AI MCP server will be documented in this file.
 ## [1.0.0] - 2025-01-05
 
 ### Added
+
 - Initial GA release
 - `resolve_domain` tool for discovering MCP connectors by business domain
 - Multi-location entity support
@@ -15,6 +16,7 @@ All notable changes to the Dock AI MCP server will be documented in this file.
 - Published to official MCP Registry as `co.dockai/mcp`
 
 ### Technical
+
 - Streamable HTTP transport
 - Hosted version at `https://mcp.dockai.co/mcp`
 - Self-hosting support via `uvx dock-ai-mcp`

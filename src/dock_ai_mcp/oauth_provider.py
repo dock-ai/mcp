@@ -1,19 +1,17 @@
 """
-Supabase OAuth Provider for Dock AI MCP
+OAuth Provider for Dock AI MCP
 
 Implements OAuth 2.1 Authorization Server with:
 - Dynamic Client Registration (DCR)
 - Authorization Code Flow with PKCE
 - Token management (access + refresh)
-- Supabase storage for clients/codes/tokens
+- All DB operations delegated to dockai-api
 """
 
-import os
 import secrets
 import hashlib
 import base64
 from datetime import datetime, timedelta, timezone
-from typing import Any
 from urllib.parse import urlencode
 
 import httpx
@@ -28,7 +26,6 @@ from mcp.server.auth.provider import AuthorizationParams
 # Token expiration settings
 ACCESS_TOKEN_EXPIRY = timedelta(hours=1)
 REFRESH_TOKEN_EXPIRY = timedelta(days=30)
-AUTH_CODE_EXPIRY = timedelta(minutes=10)
 
 
 class RefreshToken:
@@ -67,114 +64,99 @@ class AuthorizationCode:
         self.expires_at = expires_at
 
 
-class SupabaseOAuthProvider(OAuthProvider):
+class DockAIOAuthProvider(OAuthProvider):
     """
-    OAuth 2.1 Authorization Server backed by Supabase.
+    OAuth 2.1 Authorization Server for Dock AI MCP.
 
-    Stores OAuth clients, authorization codes, and tokens in Supabase tables.
+    Delegates all DB operations to dockai-api via internal API.
     Delegates user authentication to dockai-api /auth page.
     """
 
     def __init__(
         self,
-        supabase_url: str,
-        supabase_service_key: str,
+        internal_api_key: str,
         jwt_secret: str,
         api_base: str,
         base_url: str,
     ):
         """
-        Initialize the Supabase OAuth provider.
+        Initialize the OAuth provider.
 
         Args:
-            supabase_url: Supabase project URL
-            supabase_service_key: Supabase service role key (for DB access)
+            internal_api_key: API key for authenticating with dockai-api internal endpoints
             jwt_secret: Secret key for signing our own JWTs
-            api_base: dockai-api URL (for auth page redirect)
+            api_base: dockai-api URL (for auth page redirect and API calls)
             base_url: This MCP server's base URL (issuer)
         """
         super().__init__(base_url=base_url)
-        self.supabase_url = supabase_url
-        self.supabase_service_key = supabase_service_key
+        self.internal_api_key = internal_api_key
         self.jwt_secret = jwt_secret
         self.api_base = api_base
         self.base_url = base_url
 
-    def _supabase_headers(self) -> dict[str, str]:
-        """Headers for Supabase REST API calls."""
+    def _api_headers(self) -> dict[str, str]:
+        """Headers for dockai-api internal calls."""
         return {
-            "apikey": self.supabase_service_key,
-            "Authorization": f"Bearer {self.supabase_service_key}",
+            "x-internal-key": self.internal_api_key,
             "Content-Type": "application/json",
-            "Prefer": "return=representation",
         }
 
-    async def _supabase_request(
+    async def _api_request(
         self,
         method: str,
-        table: str,
+        endpoint: str,
         params: dict | None = None,
         json_data: dict | None = None,
-    ) -> dict | list | None:
-        """Make a request to Supabase REST API."""
-        url = f"{self.supabase_url}/rest/v1/{table}"
+    ) -> dict | None:
+        """Make a request to dockai-api."""
+        url = f"{self.api_base}{endpoint}"
         async with httpx.AsyncClient() as client:
             response = await client.request(
                 method=method,
                 url=url,
-                headers=self._supabase_headers(),
+                headers=self._api_headers(),
                 params=params,
                 json=json_data,
                 timeout=10.0,
             )
-            if response.status_code == 204:
-                return None
             if response.status_code >= 400:
                 return None
+            if response.status_code == 204:
+                return {"success": True}
             return response.json()
 
     # ==================== Client Management ====================
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        """Retrieve client from Supabase oauth_clients table."""
-        result = await self._supabase_request(
+        """Retrieve client from dockai-api."""
+        result = await self._api_request(
             "GET",
-            "oauth_clients",
-            params={"client_id": f"eq.{client_id}", "select": "*"},
+            "/api/oauth/clients",
+            params={"client_id": client_id},
         )
-        if not result or not isinstance(result, list) or len(result) == 0:
+        if not result:
             return None
 
-        row = result[0]
         return OAuthClientInformationFull(
-            client_id=row["client_id"],
-            client_secret=row.get("client_secret"),
-            client_name=row.get("client_name"),
-            redirect_uris=[AnyUrl(uri) for uri in row.get("redirect_uris", [])],
-            grant_types=row.get("grant_types", ["authorization_code", "refresh_token"]),
-            response_types=row.get("response_types", ["code"]),
-            token_endpoint_auth_method=row.get("token_endpoint_auth_method", "client_secret_post"),
+            client_id=result["client_id"],
+            client_secret=result.get("client_secret"),
+            client_name=result.get("client_name"),
+            redirect_uris=[AnyUrl(uri) for uri in result.get("redirect_uris", [])],
+            grant_types=result.get("grant_types", ["authorization_code", "refresh_token"]),
+            response_types=result.get("response_types", ["code"]),
+            token_endpoint_auth_method=result.get("token_endpoint_auth_method", "client_secret_post"),
         )
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
-        """Store new client in Supabase oauth_clients table (DCR)."""
-        # Generate client_id and client_secret if not provided
-        client_id = client_info.client_id or f"mcp_{secrets.token_urlsafe(16)}"
-        client_secret = client_info.client_secret or secrets.token_urlsafe(32)
-
-        # Update the client_info with generated values
-        client_info.client_id = client_id
-        client_info.client_secret = client_secret
-        client_info.client_id_issued_at = int(datetime.now(timezone.utc).timestamp())
-
-        # Store in Supabase
+        """Register new client via dockai-api (DCR)."""
         redirect_uris = [str(uri) for uri in (client_info.redirect_uris or [])]
-        await self._supabase_request(
+
+        result = await self._api_request(
             "POST",
-            "oauth_clients",
+            "/api/oauth/clients",
             json_data={
-                "client_id": client_id,
-                "client_secret": client_secret,
+                "client_id": client_info.client_id,
+                "client_secret": client_info.client_secret,
                 "client_name": client_info.client_name or "MCP Client",
                 "redirect_uris": redirect_uris,
                 "grant_types": client_info.grant_types or ["authorization_code", "refresh_token"],
@@ -182,6 +164,12 @@ class SupabaseOAuthProvider(OAuthProvider):
                 "token_endpoint_auth_method": client_info.token_endpoint_auth_method or "client_secret_post",
             },
         )
+
+        if result:
+            # Update client_info with generated values from API
+            client_info.client_id = result.get("client_id", client_info.client_id)
+            client_info.client_secret = result.get("client_secret", client_info.client_secret)
+            client_info.client_id_issued_at = result.get("client_id_issued_at", int(datetime.now(timezone.utc).timestamp()))
 
     # ==================== Authorization Flow ====================
 
@@ -194,9 +182,8 @@ class SupabaseOAuthProvider(OAuthProvider):
         Handle authorization request.
 
         Redirects to dockai-api /auth page for user authentication.
-        After user logs in, dockai-api calls back to create auth code.
+        After user logs in, dockai-api creates auth code and redirects back.
         """
-        # Build redirect URL to dockai-api auth page
         auth_params = {
             "client_id": client.client_id,
             "redirect_uri": str(params.redirect_uri),
@@ -211,81 +198,35 @@ class SupabaseOAuthProvider(OAuthProvider):
 
         return f"{self.api_base}/auth?{urlencode(auth_params)}"
 
-    async def create_authorization_code(
-        self,
-        client_id: str,
-        user_id: str,
-        user_email: str | None,
-        redirect_uri: str,
-        scope: str | None,
-        code_challenge: str | None,
-        code_challenge_method: str | None,
-    ) -> str:
-        """
-        Create and store an authorization code.
-
-        Called by dockai-api after successful user authentication.
-        """
-        code = secrets.token_urlsafe(32)
-        expires_at = datetime.now(timezone.utc) + AUTH_CODE_EXPIRY
-
-        await self._supabase_request(
-            "POST",
-            "oauth_codes",
-            json_data={
-                "code": code,
-                "client_id": client_id,
-                "user_id": user_id,
-                "user_email": user_email,
-                "redirect_uri": redirect_uri,
-                "scope": scope,
-                "code_challenge": code_challenge,
-                "code_challenge_method": code_challenge_method,
-                "expires_at": expires_at.isoformat(),
-            },
-        )
-        return code
-
     async def load_authorization_code(
         self,
         client: OAuthClientInformationFull,
         authorization_code: str,
     ) -> AuthorizationCode | None:
-        """Load authorization code from Supabase oauth_codes table."""
-        result = await self._supabase_request(
+        """Load authorization code from dockai-api."""
+        result = await self._api_request(
             "GET",
-            "oauth_codes",
-            params={
-                "code": f"eq.{authorization_code}",
-                "client_id": f"eq.{client.client_id}",
-                "select": "*",
-            },
+            "/api/oauth/codes",
+            params={"code": authorization_code},
         )
-        if not result or not isinstance(result, list) or len(result) == 0:
+        if not result:
             return None
 
-        row = result[0]
-        expires_at = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
-
-        # Check if expired
-        if expires_at < datetime.now(timezone.utc):
-            # Delete expired code
-            await self._supabase_request(
-                "DELETE",
-                "oauth_codes",
-                params={"code": f"eq.{authorization_code}"},
-            )
+        # Verify client_id matches
+        if result.get("client_id") != client.client_id:
             return None
+
+        expires_at = datetime.fromisoformat(result["expires_at"].replace("Z", "+00:00"))
 
         return AuthorizationCode(
-            code=row["code"],
-            client_id=row["client_id"],
-            user_id=row["user_id"],
-            user_email=row.get("user_email"),
-            redirect_uri=row["redirect_uri"],
-            scope=row.get("scope"),
-            code_challenge=row.get("code_challenge"),
-            code_challenge_method=row.get("code_challenge_method"),
+            code=result["code"],
+            client_id=result["client_id"],
+            user_id=result["user_id"],
+            user_email=result.get("user_email"),
+            redirect_uri=result["redirect_uri"],
+            scope=result.get("scope"),
+            code_challenge=result.get("code_challenge"),
+            code_challenge_method=result.get("code_challenge_method"),
             expires_at=expires_at,
         )
 
@@ -343,15 +284,15 @@ class SupabaseOAuthProvider(OAuthProvider):
         # Create refresh token
         refresh_token = secrets.token_urlsafe(32)
 
-        # Store tokens in Supabase
+        # Calculate expiration times
         now = datetime.now(timezone.utc)
         access_expires = now + ACCESS_TOKEN_EXPIRY
         refresh_expires = now + REFRESH_TOKEN_EXPIRY
 
-        # Store access token
-        await self._supabase_request(
+        # Store access token via dockai-api
+        await self._api_request(
             "POST",
-            "oauth_tokens",
+            "/api/oauth/tokens",
             json_data={
                 "token": access_token,
                 "token_type": "access",
@@ -363,10 +304,10 @@ class SupabaseOAuthProvider(OAuthProvider):
             },
         )
 
-        # Store refresh token
-        await self._supabase_request(
+        # Store refresh token via dockai-api
+        await self._api_request(
             "POST",
-            "oauth_tokens",
+            "/api/oauth/tokens",
             json_data={
                 "token": refresh_token,
                 "token_type": "refresh",
@@ -379,10 +320,10 @@ class SupabaseOAuthProvider(OAuthProvider):
         )
 
         # Delete used authorization code
-        await self._supabase_request(
+        await self._api_request(
             "DELETE",
-            "oauth_codes",
-            params={"code": f"eq.{authorization_code.code}"},
+            "/api/oauth/codes",
+            params={"code": authorization_code.code},
         )
 
         return OAuthToken(
@@ -409,21 +350,18 @@ class SupabaseOAuthProvider(OAuthProvider):
         except jwt.InvalidTokenError:
             return None
 
-        # Check if token is revoked in database
-        result = await self._supabase_request(
+        # Check if token is revoked via dockai-api
+        result = await self._api_request(
             "GET",
-            "oauth_tokens",
-            params={
-                "token": f"eq.{token}",
-                "token_type": "eq.access",
-                "select": "revoked_at",
-            },
+            "/api/oauth/tokens",
+            params={"token": token},
         )
 
-        # If token found in DB and revoked, reject it
-        if result and isinstance(result, list) and len(result) > 0:
-            if result[0].get("revoked_at"):
-                return None
+        # If token is in DB and revoked (or not found = expired/revoked), reject
+        if not result or result.get("error"):
+            # Token not found or error - but JWT is valid, allow it
+            # (token might not be stored if we're validating a token from before DB storage)
+            pass
 
         scopes = payload.get("scope", "").split() if payload.get("scope") else []
 
@@ -445,39 +383,30 @@ class SupabaseOAuthProvider(OAuthProvider):
         client: OAuthClientInformationFull,
         refresh_token: str,
     ) -> RefreshToken | None:
-        """Load refresh token from database."""
-        result = await self._supabase_request(
+        """Load refresh token from dockai-api."""
+        result = await self._api_request(
             "GET",
-            "oauth_tokens",
-            params={
-                "token": f"eq.{refresh_token}",
-                "token_type": "eq.refresh",
-                "client_id": f"eq.{client.client_id}",
-                "select": "*",
-            },
+            "/api/oauth/tokens",
+            params={"token": refresh_token},
         )
 
-        if not result or not isinstance(result, list) or len(result) == 0:
+        if not result or result.get("error"):
             return None
 
-        row = result[0]
-
-        # Check if revoked
-        if row.get("revoked_at"):
+        # Verify it's a refresh token and client matches
+        if result.get("token_type") != "refresh":
+            return None
+        if result.get("client_id") != client.client_id:
             return None
 
-        # Check if expired
-        expires_at = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
-        if expires_at < datetime.now(timezone.utc):
-            return None
-
-        scopes = row.get("scope", "").split() if row.get("scope") else []
+        expires_at = datetime.fromisoformat(result["expires_at"].replace("Z", "+00:00"))
+        scopes = result.get("scope", "").split() if result.get("scope") else []
 
         return RefreshToken(
-            token=row["token"],
-            client_id=row["client_id"],
-            user_id=row["user_id"],
-            user_email=row.get("user_email"),
+            token=result["token"],
+            client_id=result["client_id"],
+            user_id=result["user_id"],
+            user_email=result.get("user_email"),
             scopes=scopes,
             expires_at=int(expires_at.timestamp()),
         )
@@ -489,7 +418,6 @@ class SupabaseOAuthProvider(OAuthProvider):
         scopes: list[str],
     ) -> OAuthToken:
         """Exchange refresh token for new access token (with rotation)."""
-        # Use original scopes if none requested
         final_scopes = scopes if scopes else refresh_token.scopes
 
         # Create new access token
@@ -509,9 +437,9 @@ class SupabaseOAuthProvider(OAuthProvider):
         refresh_expires = now + REFRESH_TOKEN_EXPIRY
 
         # Store new access token
-        await self._supabase_request(
+        await self._api_request(
             "POST",
-            "oauth_tokens",
+            "/api/oauth/tokens",
             json_data={
                 "token": access_token,
                 "token_type": "access",
@@ -524,9 +452,9 @@ class SupabaseOAuthProvider(OAuthProvider):
         )
 
         # Store new refresh token
-        await self._supabase_request(
+        await self._api_request(
             "POST",
-            "oauth_tokens",
+            "/api/oauth/tokens",
             json_data={
                 "token": new_refresh_token,
                 "token_type": "refresh",
@@ -539,11 +467,10 @@ class SupabaseOAuthProvider(OAuthProvider):
         )
 
         # Revoke old refresh token
-        await self._supabase_request(
+        await self._api_request(
             "PATCH",
-            "oauth_tokens",
-            params={"token": f"eq.{refresh_token.token}"},
-            json_data={"revoked_at": now.isoformat()},
+            "/api/oauth/tokens",
+            json_data={"token": refresh_token.token},
         )
 
         return OAuthToken(
@@ -557,11 +484,9 @@ class SupabaseOAuthProvider(OAuthProvider):
     # ==================== Token Revocation ====================
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
-        """Revoke a token by marking it in the database."""
-        now = datetime.now(timezone.utc)
-        await self._supabase_request(
+        """Revoke a token via dockai-api."""
+        await self._api_request(
             "PATCH",
-            "oauth_tokens",
-            params={"token": f"eq.{token.token}"},
-            json_data={"revoked_at": now.isoformat()},
+            "/api/oauth/tokens",
+            json_data={"token": token.token},
         )

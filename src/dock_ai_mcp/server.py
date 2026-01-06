@@ -12,12 +12,11 @@ from pydantic import Field
 from fastmcp import FastMCP, Context
 from mcp.types import Icon
 
-from .oauth_provider import SupabaseOAuthProvider
+from .oauth_provider import DockAIOAuthProvider
 
 # Environment variables
 API_BASE = os.environ.get("DOCKAI_API_URL", "https://api.dockai.co")
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY")
 JWT_SECRET = os.environ.get("JWT_SECRET")
 MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.dockai.co")
 
@@ -28,14 +27,13 @@ ICON_DATA_URI = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiI
 IS_SERVERLESS = os.environ.get("VERCEL") == "1"
 
 # OAuth 2.1 Authorization Server with DCR
-# Our own OAuth server backed by Supabase storage
-oauth_provider = SupabaseOAuthProvider(
-    supabase_url=SUPABASE_URL,
-    supabase_service_key=SUPABASE_SERVICE_KEY,
+# All DB operations delegated to dockai-api
+oauth_provider = DockAIOAuthProvider(
+    internal_api_key=INTERNAL_API_KEY,
     jwt_secret=JWT_SECRET,
     api_base=API_BASE,
     base_url=MCP_BASE_URL,
-) if SUPABASE_URL and SUPABASE_SERVICE_KEY and JWT_SECRET else None
+) if INTERNAL_API_KEY and JWT_SECRET else None
 
 mcp = FastMCP(
     name="Dock AI",

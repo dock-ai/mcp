@@ -21,7 +21,9 @@ from pydantic import AnyUrl
 from fastmcp.server.auth import OAuthProvider, AccessToken
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from mcp.server.auth.provider import AuthorizationParams
+from mcp.server.auth.provider import AuthorizationCode as SDKAuthorizationCode
 from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
+from pydantic import AnyUrl
 
 
 # Token expiration settings
@@ -40,29 +42,11 @@ class RefreshToken:
         self.expires_at = expires_at
 
 
-class AuthorizationCode:
-    """Authorization code model."""
-    def __init__(
-        self,
-        code: str,
-        client_id: str,
-        user_id: str,
-        user_email: str | None,
-        redirect_uri: str,
-        scope: str | None,
-        code_challenge: str | None,
-        code_challenge_method: str | None,
-        expires_at: datetime,
-    ):
-        self.code = code
-        self.client_id = client_id
-        self.user_id = user_id
-        self.user_email = user_email
-        self.redirect_uri = redirect_uri
-        self.scope = scope
-        self.code_challenge = code_challenge
-        self.code_challenge_method = code_challenge_method
-        self.expires_at = expires_at
+class AuthorizationCode(SDKAuthorizationCode):
+    """Authorization code model extending SDK's AuthorizationCode with user info."""
+    # Additional fields for user info (not in SDK)
+    user_id: str
+    user_email: str | None = None
 
 
 class DockAIOAuthProvider(OAuthProvider):
@@ -223,18 +207,24 @@ class DockAIOAuthProvider(OAuthProvider):
         if result.get("client_id") != client.client_id:
             return None
 
-        expires_at = datetime.fromisoformat(result["expires_at"].replace("Z", "+00:00"))
+        # Convert expires_at to timestamp (float) as expected by SDK
+        expires_at_dt = datetime.fromisoformat(result["expires_at"].replace("Z", "+00:00"))
+        expires_at_ts = expires_at_dt.timestamp()
+
+        # Convert scope string to scopes list
+        scope_str = result.get("scope") or ""
+        scopes = scope_str.split() if scope_str else []
 
         return AuthorizationCode(
             code=result["code"],
             client_id=result["client_id"],
             user_id=result["user_id"],
             user_email=result.get("user_email"),
-            redirect_uri=result["redirect_uri"],
-            scope=result.get("scope"),
-            code_challenge=result.get("code_challenge"),
-            code_challenge_method=result.get("code_challenge_method"),
-            expires_at=expires_at,
+            redirect_uri=AnyUrl(result["redirect_uri"]),
+            scopes=scopes,
+            code_challenge=result.get("code_challenge") or "",
+            expires_at=expires_at_ts,
+            redirect_uri_provided_explicitly=True,  # Always true for our flow
         )
 
     # ==================== Token Exchange ====================
@@ -277,7 +267,9 @@ class DockAIOAuthProvider(OAuthProvider):
         authorization_code: AuthorizationCode,
     ) -> OAuthToken:
         """Exchange authorization code for access and refresh tokens."""
-        scopes = authorization_code.scope.split() if authorization_code.scope else []
+        # authorization_code.scopes is already a list
+        scopes = authorization_code.scopes
+        scope_str = " ".join(scopes) if scopes else None
 
         # Create access token JWT
         access_token = self._create_jwt(
@@ -306,7 +298,7 @@ class DockAIOAuthProvider(OAuthProvider):
                 "client_id": authorization_code.client_id,
                 "user_id": authorization_code.user_id,
                 "user_email": authorization_code.user_email,
-                "scope": authorization_code.scope,
+                "scope": scope_str,
                 "expires_at": access_expires.isoformat(),
             },
         )
@@ -321,7 +313,7 @@ class DockAIOAuthProvider(OAuthProvider):
                 "client_id": authorization_code.client_id,
                 "user_id": authorization_code.user_id,
                 "user_email": authorization_code.user_email,
-                "scope": authorization_code.scope,
+                "scope": scope_str,
                 "expires_at": refresh_expires.isoformat(),
             },
         )
@@ -337,7 +329,7 @@ class DockAIOAuthProvider(OAuthProvider):
             access_token=access_token,
             token_type="Bearer",
             expires_in=int(ACCESS_TOKEN_EXPIRY.total_seconds()),
-            scope=authorization_code.scope,
+            scope=scope_str,
             refresh_token=refresh_token,
         )
 

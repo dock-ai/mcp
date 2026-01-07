@@ -85,22 +85,45 @@ SERVER_CARD = {
 
 async def well_known_mcp(request):
     """Serve the MCP Server Card at /.well-known/mcp.json"""
+    # Server Card is public metadata - allow any origin to read it
+    # This is intentional as it's discovery metadata, not sensitive data
     return JSONResponse(
         SERVER_CARD,
         headers={
             "Cache-Control": "public, max-age=3600",
-            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Origin": "*",  # Public discovery endpoint
         }
     )
 
+
+# Allowed origins for CORS
+ALLOWED_ORIGINS = [
+    # Dock AI
+    "https://dockai.co",
+    "https://www.dockai.co",
+    "https://mcp.dockai.co",
+    # Claude
+    "https://claude.ai",
+    "https://www.claude.ai",
+    # ChatGPT
+    "https://chat.openai.com",
+    "https://chatgpt.com",
+    # Mistral
+    "https://chat.mistral.ai",
+    "https://mistral.ai",
+    # Development
+    "http://localhost:3000",
+    "http://localhost:3001",
+]
 
 # ASGI app with CORS and Rate Limiting for Vercel
 middleware = [
     Middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=ALLOWED_ORIGINS,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "X-Internal-Key"],
+        allow_credentials=True,
     ),
     Middleware(RateLimitMiddleware, limiter=rate_limiter),
 ]

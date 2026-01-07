@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 RATE_LIMIT_MAX = int(os.environ.get("RATE_LIMIT_MAX_REQUESTS", "100"))
 RATE_LIMIT_WINDOW = int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "60"))
 
+# Environment check for fail-closed behavior
+IS_PRODUCTION = os.environ.get("VERCEL_ENV") == "production" or os.environ.get("NODE_ENV") == "production"
+
 # Paths that bypass rate limiting
 WHITELISTED_PATHS = {"/health", "/.well-known/mcp.json"}
 
@@ -95,8 +98,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.limit_value = RATE_LIMIT_MAX
 
     async def dispatch(self, request: Request, call_next):
-        # Skip rate limiting if not configured
+        # Fail closed in production if rate limiting not configured
         if not self.limiter:
+            if IS_PRODUCTION:
+                logger.error("SECURITY: Rate limiting not configured in production!")
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": "Service temporarily unavailable"},
+                )
+            # In development, allow but warn
             return await call_next(request)
 
         # Skip OPTIONS requests (CORS preflight)
@@ -143,7 +153,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return response
 
         except Exception as e:
-            # Log the error for monitoring, but fail open
+            # Log the error for monitoring
             logger.error(
                 f"Rate limiting failed: {type(e).__name__}: {e}",
                 extra={
@@ -151,5 +161,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     "path": request.url.path,
                 },
             )
-            # Fail open - allow request if rate limiting fails
+            # Fail closed in production, fail open in development
+            if IS_PRODUCTION:
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": "Service temporarily unavailable"},
+                )
             return await call_next(request)

@@ -35,14 +35,19 @@ def get_rate_limiter():
     url = os.environ.get("UPSTASH_REDIS_REST_URL")
     token = os.environ.get("UPSTASH_REDIS_REST_TOKEN")
 
+    # Debug: log what we found
+    logger.info(f"UPSTASH_REDIS_REST_URL configured: {bool(url)}")
+    logger.info(f"UPSTASH_REDIS_REST_TOKEN configured: {bool(token)}")
+
     if not url or not token:
-        logger.info("Rate limiting disabled: UPSTASH_REDIS_* not configured")
+        logger.warning("Rate limiting disabled: UPSTASH_REDIS_* not configured")
         return None
 
     try:
         from upstash_ratelimit import FixedWindow, Ratelimit
         from upstash_redis import Redis
 
+        logger.info(f"Connecting to Upstash Redis: {url[:30]}...")
         redis = Redis(url=url, token=token)
         limiter = Ratelimit(
             redis=redis,
@@ -51,8 +56,11 @@ def get_rate_limiter():
         )
         logger.info(f"Rate limiting enabled: {RATE_LIMIT_MAX} req/{RATE_LIMIT_WINDOW}s")
         return limiter
+    except ImportError as e:
+        logger.error(f"Failed to import upstash packages: {e}")
+        return None
     except Exception as e:
-        logger.error(f"Failed to initialize rate limiter: {e}")
+        logger.error(f"Failed to initialize rate limiter: {type(e).__name__}: {e}")
         return None
 
 

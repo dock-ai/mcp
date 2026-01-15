@@ -16,7 +16,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 # Import the MCP server and rate limiter
-from dock_ai_mcp.server import mcp
+from dock_ai_mcp.server import mcp, IS_SERVERLESS
 from dock_ai_mcp.rate_limit import RateLimitMiddleware, get_rate_limiter
 
 # Initialize rate limiter (returns None if Redis not configured)
@@ -128,8 +128,8 @@ middleware = [
     Middleware(RateLimitMiddleware, limiter=rate_limiter),
 ]
 
-# Get the base MCP app
-mcp_app = mcp.http_app(middleware=middleware)
+# Get the base MCP app (stateless_http for serverless deployments like Vercel)
+mcp_app = mcp.http_app(middleware=middleware, stateless_http=IS_SERVERLESS)
 
 
 # Custom ASGI app that handles .well-known routes

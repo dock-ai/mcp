@@ -50,7 +50,7 @@ oauth_provider = DockAIOAuthProvider(
 mcp = FastMCP(
     name="Dock AI",
     auth=oauth_provider,  # OAuth 2.1 Authorization Server (None if env vars not set)
-    stateless_http=IS_SERVERLESS,
+    # Note: stateless_http is now passed to http_app() or run() instead (FastMCP deprecation)
     instructions="""
     Dock AI is a registry that maps businesses to their MCP connectors.
 
@@ -426,7 +426,7 @@ async def execute_action(
 
 def main():
     """Entry point for the MCP server."""
-    mcp.run(transport="http", host="0.0.0.0", port=8080)
+    mcp.run(transport="http", host="0.0.0.0", port=8080, stateless_http=IS_SERVERLESS)
 
 
 if __name__ == "__main__":

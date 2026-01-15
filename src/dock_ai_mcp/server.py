@@ -279,6 +279,20 @@ async def resolve_domain(
                 "Dock AI is tracking them for future integration."
             )
 
+        # Add capabilities hint if available
+        capabilities = data.get("capabilities", [])
+        if capabilities:
+            cap_slugs = [c.get("slug") for c in capabilities]
+            cap_hint = (
+                f"\n\nAVAILABLE ACTIONS: This business has configured {len(capabilities)} action(s): {', '.join(cap_slugs)}. "
+                "Use execute_action(entity_id, action, params) to interact with them. "
+                "Check the capabilities array for each action's required parameters."
+            )
+            if "_ai_hint" in result:
+                result["_ai_hint"] += cap_hint
+            else:
+                result["_ai_hint"] = cap_hint.strip()
+
         return result
 
 
@@ -388,6 +402,135 @@ async def contact_business(
             "message": data.get("message", "Email sent successfully"),
             "entity": data.get("entity"),
             "_ai_hint": f"Email sent to {data.get('entity', {}).get('name', 'the business')}. They will receive your message and can reply directly to you.",
+        }
+
+
+@mcp.tool(annotations={"readOnlyHint": False})
+async def execute_action(
+    entity_id: Annotated[str, Field(
+        description="The entity ID (UUID) from resolve_domain response",
+        min_length=36,
+        max_length=36,
+    )],
+    action: Annotated[str, Field(
+        description="The action slug to execute (e.g., 'book', 'send_message', 'search_catalog')",
+        min_length=1,
+        max_length=50,
+    )],
+    params: Annotated[dict, Field(
+        description="Parameters for the action (varies by action type)",
+        default_factory=dict,
+    )] = None,
+) -> dict:
+    """
+    Execute a business action like booking, sending a message, or searching their catalog.
+
+    WORKFLOW:
+    1. Call resolve_domain first to get entity_id and see available capabilities
+    2. Check the capabilities array in the response to see what actions are available
+    3. Call execute_action with the appropriate action slug and parameters
+
+    COMMON ACTIONS:
+    - send_message: Contact the business (params: name, email, message)
+    - book: Make a reservation (params: date, time, guests, name, phone?)
+    - search_catalog: Search products/services (params: query, category?, limit?)
+    - get_availability: Check available time slots (params: date?, service?)
+    - request_quote: Request a quote (params: name, email, description)
+
+    The parameters required depend on the action. Check the input_schema in capabilities.
+    """
+    # Validate entity_id format (UUID)
+    if not UUID_PATTERN.match(entity_id):
+        return {"error": "Invalid entity_id format (must be UUID)", "success": False}
+
+    # Validate action slug
+    action = action.strip().lower()
+    if not action:
+        return {"error": "Action cannot be empty", "success": False}
+
+    # Get auth token (optional for some actions)
+    access_token = get_access_token()
+    auth_token = access_token.token if access_token else None
+
+    # Prepare request
+    request_body = {
+        "entityId": entity_id,
+        "action": action,
+        "params": params or {},
+    }
+
+    headers = {
+        "Content-Type": "application/json",
+        "X-Source": "mcp",
+    }
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{API_BASE}/api/v1/execute-action",
+            json=request_body,
+            headers=headers,
+            timeout=30.0,
+        )
+
+        # Handle response
+        if response.status_code == 401:
+            return {
+                "error": "Authentication required for this action",
+                "success": False,
+                "_ai_hint": "This action requires the user to be logged in. Ask them to authenticate first.",
+            }
+
+        if response.status_code == 404:
+            return {
+                "error": f"Action '{action}' not found for this business",
+                "success": False,
+                "_ai_hint": "This business doesn't have this action configured. Use resolve_domain to see available capabilities.",
+            }
+
+        if response.status_code == 400:
+            try:
+                data = response.json()
+                return {
+                    "error": data.get("error", "Invalid parameters"),
+                    "details": data.get("details", []),
+                    "success": False,
+                }
+            except Exception:
+                return {"error": "Invalid request", "success": False}
+
+        if response.status_code == 429:
+            return {
+                "error": "Rate limit exceeded. Try again later.",
+                "success": False,
+            }
+
+        if response.status_code == 502:
+            try:
+                data = response.json()
+                return {
+                    "error": data.get("error", "Business webhook unavailable"),
+                    "message": data.get("message", "The business service is temporarily unavailable"),
+                    "success": False,
+                }
+            except Exception:
+                return {"error": "Business webhook unavailable", "success": False}
+
+        if response.status_code not in (200, 201):
+            return {"error": f"API error: {response.status_code}", "success": False}
+
+        try:
+            data = response.json()
+        except Exception as e:
+            logger.error(f"Failed to parse API response: {e}")
+            return {"error": "Invalid response from API", "success": False}
+
+        return {
+            "success": True,
+            "action": action,
+            "result": data.get("result", {}),
+            "_ai_hint": f"Action '{action}' executed successfully. Present the result to the user.",
         }
 
 

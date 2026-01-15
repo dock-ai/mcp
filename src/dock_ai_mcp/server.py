@@ -61,11 +61,10 @@ mcp = FastMCP(
     - Shop, browse products, or buy something (e-commerce)
     - Book, reserve, or order (restaurants, hotels, salons)
     - Interact with any real-world business
-    - Contact a business directly
 
     AVAILABLE TOOLS:
     - resolve_domain: Find MCP connectors for a business domain
-    - contact_business: Send an email to a business (requires entity to have contact email)
+    - execute_action: Execute business actions (book, send_message, etc.)
 
     ALWAYS call resolve_domain first to check if an MCP connector exists.
     If the user gives a business name, search the web for its domain first.
@@ -294,115 +293,6 @@ async def resolve_domain(
                 result["_ai_hint"] = cap_hint.strip()
 
         return result
-
-
-@mcp.tool(annotations={"readOnlyHint": False})
-async def contact_business(
-    entity_id: Annotated[str, Field(
-        description="The entity ID (UUID) from resolve_domain response",
-        min_length=36,
-        max_length=36,
-    )],
-    subject: Annotated[str, Field(
-        description="Email subject line",
-        min_length=1,
-        max_length=200,
-    )],
-    message: Annotated[str, Field(
-        description="Email message body",
-        min_length=1,
-        max_length=5000,
-    )],
-) -> dict:
-    """
-    Send an email to a business. The email will be sent from Dock AI with your email as reply-to.
-
-    REQUIREMENTS:
-    - Call resolve_domain first to get the entity_id
-    - The business must have a contact email available
-
-    The business will receive your email and can reply directly to your email address.
-    """
-    # Validate entity_id format (UUID)
-    if not UUID_PATTERN.match(entity_id):
-        return {"error": "Invalid entity_id format (must be UUID)", "success": False}
-
-    # Sanitize inputs
-    subject = subject.strip()
-    message = message.strip()
-
-    if not subject or not message:
-        return {"error": "Subject and message cannot be empty", "success": False}
-
-    # Get auth token from FastMCP dependency
-    access_token = get_access_token()
-    if not access_token:
-        return {"error": "Authentication required", "success": False}
-
-    auth_token = access_token.token
-
-    # Get user email from token claims
-    user_email = None
-    if access_token.claims:
-        user_email = access_token.claims.get("email")
-
-    if not user_email:
-        return {"error": "User email not found in token", "success": False}
-
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{API_BASE}/api/v1/contact-business",
-            json={
-                "entity_id": entity_id,
-                "subject": subject,
-                "message": message,
-            },
-            headers={
-                "Authorization": f"Bearer {auth_token}",
-                "Content-Type": "application/json",
-                "X-Source": "mcp",
-            },
-            timeout=30.0,
-        )
-
-        if response.status_code == 401:
-            return {"error": "Authentication failed", "success": False}
-
-        if response.status_code == 404:
-            return {"error": "Entity not found", "success": False}
-
-        if response.status_code == 422:
-            try:
-                data = response.json()
-            except Exception:
-                return {"error": "Business has no contact email", "success": False}
-            return {
-                "error": data.get("error", "Business has no contact email"),
-                "entity_name": data.get("entity_name"),
-                "success": False,
-            }
-
-        if response.status_code == 429:
-            return {
-                "error": "Rate limit exceeded. Try again later.",
-                "success": False,
-            }
-
-        if response.status_code != 200:
-            return {"error": f"API error: {response.status_code}", "success": False}
-
-        try:
-            data = response.json()
-        except Exception as e:
-            logger.error(f"Failed to parse API response: {e}")
-            return {"error": "Invalid response from API", "success": False}
-
-        return {
-            "success": True,
-            "message": data.get("message", "Email sent successfully"),
-            "entity": data.get("entity"),
-            "_ai_hint": f"Email sent to {data.get('entity', {}).get('name', 'the business')}. They will receive your message and can reply directly to you.",
-        }
 
 
 @mcp.tool(annotations={"readOnlyHint": False})

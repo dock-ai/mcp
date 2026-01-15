@@ -211,11 +211,13 @@ async def resolve_domain(
         if not entity:
             return {"error": "No entity found for this domain", "domain": domain}
 
-        # Build response with entity and connectors
+        # Build response with entity, connectors, and capabilities
+        capabilities = data.get("capabilities", [])
         result = {
             "domain": domain,
             "entity": entity,
             "connectors": connectors,
+            "capabilities": capabilities,
         }
 
         # Find connectors with MCP endpoints
@@ -279,9 +281,8 @@ async def resolve_domain(
             )
 
         # Add capabilities hint if available
-        capabilities = data.get("capabilities", [])
         if capabilities:
-            cap_slugs = [c.get("slug") for c in capabilities]
+            cap_slugs = [c.get("action") for c in capabilities]
             cap_hint = (
                 f"\n\nAVAILABLE ACTIONS: This business has configured {len(capabilities)} action(s): {', '.join(cap_slugs)}. "
                 "Use execute_action(entity_id, action, params) to interact with them. "

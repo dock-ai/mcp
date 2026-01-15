@@ -417,9 +417,8 @@ async def execute_action(
         min_length=1,
         max_length=50,
     )],
-    params: Annotated[dict, Field(
+    params: Annotated[dict | None, Field(
         description="Parameters for the action (varies by action type)",
-        default_factory=dict,
     )] = None,
 ) -> dict:
     """

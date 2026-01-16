@@ -109,7 +109,7 @@ def getting_started_guide() -> str:
     """Getting started guide for Dock AI."""
     return """# Getting Started with Dock AI
 
-Dock AI is the first Entity Discovery Protocol (EDP) registry. It helps AI agents discover which MCP connectors can interact with real-world businesses.
+Dock AI helps AI agents discover which MCP connectors can interact with real-world businesses.
 
 ## How it works
 

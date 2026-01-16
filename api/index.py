@@ -30,10 +30,10 @@ SERVER_CARD = {
     "protocolVersion": "2025-06-18",
     "serverInfo": {
         "name": "dock-ai",
-        "title": "Dock AI - Entity Discovery Protocol",
+        "title": "Dock AI",
         "version": "1.0.0"
     },
-    "description": "Discover which MCP servers can interact with any business. The first Entity Discovery Protocol (EDP) registry. When a user wants to shop, book, or interact with a business, use Dock AI to find the right MCP connector.",
+    "description": "Discover which MCP servers can interact with any business. When a user wants to shop, book, or interact with a business, use Dock AI to find the right MCP connector.",
     "iconUrl": "https://dockai.co/icon.svg",
     "documentationUrl": "https://dockai.co/docs",
     "transport": {

@@ -156,6 +156,9 @@ async def resolve_domain(
         min_length=3,
         max_length=255,
     )],
+    include_private: Annotated[bool, Field(
+        description="If True, include private capabilities (requires organization membership)",
+    )] = False,
 ) -> dict:
     """
     Check if an MCP connector exists for a business domain.
@@ -165,9 +168,13 @@ async def resolve_domain(
     - "Find products on Gymshark" -> resolve_domain("gymshark.com")
     - "Book a table at Carbone" -> resolve_domain("carbonenewyork.com")
 
+    Set include_private=True to see private capabilities (only works if the
+    authenticated user is a member of the business's organization).
+
     Returns:
         - mcps: Available MCP connectors with endpoints and capabilities
         - pending_providers: Providers without public MCP yet
+        - capabilities: Actions available for the business (public only, or all if include_private=True and authorized)
     """
     # Validate domain format
     domain = domain.lower().strip()
@@ -180,13 +187,16 @@ async def resolve_domain(
     if access_token:
         auth_token = access_token.token
 
+    # Use internal endpoint for private capabilities
+    endpoint = "/api/v1/resolve-internal" if include_private else "/api/v1/resolve"
+
     async with httpx.AsyncClient() as client:
         headers = {"X-Source": "mcp"}
         if auth_token:
             headers["Authorization"] = f"Bearer {auth_token}"
 
         response = await client.get(
-            f"{API_BASE}/api/v1/resolve",
+            f"{API_BASE}{endpoint}",
             params={"domain": domain},
             timeout=10.0,
             headers=headers,

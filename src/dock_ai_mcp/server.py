@@ -65,9 +65,14 @@ mcp = FastMCP(
     AVAILABLE TOOLS:
     - resolve_domain: Find MCP connectors for a business domain
     - execute_action: Execute business actions (book, send_message, etc.)
+    - my_organization: Get YOUR organization's entities and capabilities (for internal tools)
 
     ALWAYS call resolve_domain first to check if an MCP connector exists.
     If the user gives a business name, search the web for its domain first.
+
+    FOR INTERNAL USE: When the user wants to use their own business tools or workflows
+    (keywords: "my business", "our workflow", "internal", "private", "prospection"),
+    call my_organization() to discover available capabilities without needing a domain.
     """,
     icons=[
         Icon(src=ICON_DATA_URI, mimeType="image/svg+xml", sizes=["48x48"]),
@@ -439,6 +444,97 @@ async def execute_action(
             "result": data.get("result", {}),
             "_ai_hint": f"Action '{action}' executed successfully. Present the result to the user.",
         }
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+async def my_organization() -> dict:
+    """
+    Get YOUR organization's entities and available capabilities.
+
+    USE THIS when the user wants to use their own internal business tools or workflows.
+    This returns all capabilities (including private ones) for entities the user owns.
+
+    Keywords that suggest using this tool:
+    - "my business", "our company", "our workflow"
+    - "internal tool", "private action"
+    - "prospection", "our CRM", "our system"
+
+    Returns:
+        - organization: Your org info (id, name, slug)
+        - entities: List of your business entities with their capabilities
+        - user: Your user info and role
+
+    After getting capabilities, use execute_action(entity_id, action, params) to run them.
+    """
+    # Get auth token - required for this endpoint
+    access_token = get_access_token()
+    if not access_token:
+        return {
+            "error": "Authentication required",
+            "message": "You must be logged in to access your organization. Connect your MCP client with OAuth to authenticate.",
+            "_ai_hint": "The user needs to authenticate first. Guide them to connect their AI assistant with Dock AI OAuth.",
+        }
+
+    auth_token = access_token.token
+
+    async with httpx.AsyncClient() as client:
+        headers = {
+            "Authorization": f"Bearer {auth_token}",
+            "X-Source": "mcp",
+        }
+
+        response = await client.get(
+            f"{API_BASE}/api/v1/my-organization",
+            headers=headers,
+            timeout=10.0,
+        )
+
+        if response.status_code == 401:
+            return {
+                "error": "Authentication expired or invalid",
+                "message": "Please re-authenticate with Dock AI.",
+                "_ai_hint": "The user's authentication has expired. They need to reconnect.",
+            }
+
+        if response.status_code == 404:
+            return {
+                "error": "No organization found",
+                "message": "You are not a member of any organization. Register or claim a business first at https://dockai.co",
+                "_ai_hint": "The user doesn't have an organization yet. Guide them to register their business at dockai.co",
+            }
+
+        if response.status_code != 200:
+            return {"error": f"API error: {response.status_code}"}
+
+        try:
+            data = response.json()
+        except Exception as e:
+            logger.error(f"Failed to parse API response: {e}")
+            return {"error": "Invalid response from API"}
+
+        # Enhance response with helpful hints
+        entities = data.get("entities", [])
+        total_caps = sum(len(e.get("capabilities", [])) for e in entities)
+
+        if total_caps > 0:
+            # Build a summary of available actions
+            all_caps = []
+            for entity in entities:
+                for cap in entity.get("capabilities", []):
+                    all_caps.append(f"{cap['action']} ({entity['name']})")
+
+            data["_ai_hint"] = (
+                f"You have access to {total_caps} capability(ies) across {len(entities)} entity(ies): {', '.join(all_caps)}. "
+                "Use execute_action(entity_id, action, params) to run any of these. "
+                "Check each capability's input_schema for required parameters."
+            )
+        else:
+            data["_ai_hint"] = (
+                "No capabilities configured yet. "
+                "Go to the Dock AI dashboard at https://business.dockai.co to add capabilities to your entities."
+            )
+
+        return data
 
 
 def main():

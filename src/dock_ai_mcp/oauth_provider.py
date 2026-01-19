@@ -326,6 +326,23 @@ class DockAIOAuthProvider(OAuthProvider):
                 },
             )
 
+        # Store access token with client_id for MCP client tracking
+        # This allows us to identify which MCP client made each request
+        access_expires = now + ACCESS_TOKEN_EXPIRY
+        await self._api_request(
+            "POST",
+            "/api/oauth/tokens",
+            json_data={
+                "token": access_token,
+                "token_type": "access",
+                "client_id": authorization_code.client_id,
+                "user_id": authorization_code.user_id,
+                "user_email": authorization_code.user_email,
+                "scope": scope_str,
+                "expires_at": access_expires.isoformat(),
+            },
+        )
+
         # Delete used authorization code
         await self._api_request(
             "DELETE",

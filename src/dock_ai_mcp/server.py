@@ -73,6 +73,14 @@ mcp = FastMCP(
     FOR INTERNAL USE: When the user wants to use their own business tools or workflows
     (keywords: "my business", "our workflow", "internal", "private", "prospection"),
     call my_organization() to discover available capabilities without needing a domain.
+
+    ⚠️ CRITICAL - ALWAYS CONFIRM BEFORE EXECUTING:
+    Before calling execute_action, you MUST:
+    1. Show the user exactly what action will be executed
+    2. List all parameters that will be sent
+    3. Ask for explicit confirmation ("Do you want me to execute this?")
+    4. Only proceed after the user says yes
+    Actions can trigger real business processes (emails, payments, webhooks).
     """,
     icons=[
         Icon(src=ICON_DATA_URI, mimeType="image/svg+xml", sizes=["48x48"]),
@@ -105,6 +113,35 @@ I need step-by-step instructions for:
 - Le Chat (Mistral)
 
 The MCP server URL is: https://mcp.dockai.co"""
+
+
+@mcp.prompt()
+def business_workflow() -> str:
+    """Execute internal business workflows safely with user confirmation."""
+    return """I want to execute a business workflow using my organization's capabilities.
+
+IMPORTANT: Follow this process EXACTLY:
+
+1. **DISCOVER** - Call my_organization() to see available capabilities
+
+2. **IDENTIFY** - Based on my request, identify which capability to use
+   - Match my intent to the available actions
+   - If unclear, ask me to clarify
+
+3. **COLLECT** - Check the capability's input_schema and ask me for any missing required parameters
+   - List what information you need
+   - Don't assume or invent data
+
+4. **CONFIRM** - ALWAYS show me exactly what will be executed BEFORE doing it:
+   - Entity name and ID
+   - Action to execute
+   - All parameters that will be sent
+   - Ask: "Do you want me to execute this action?"
+
+5. **EXECUTE** - Only after I explicitly confirm, call execute_action()
+
+⚠️ NEVER skip step 4. Some actions may trigger real business processes (emails, payments, bookings).
+The user MUST validate before any action is executed."""
 
 
 # ============== RESOURCES ==============
@@ -449,22 +486,25 @@ async def execute_action(
 @mcp.tool(annotations={"readOnlyHint": True})
 async def my_organization() -> dict:
     """
-    Get YOUR organization's entities and available capabilities.
+    Discover the user's organization and available business capabilities.
 
-    USE THIS when the user wants to use their own internal business tools or workflows.
-    This returns all capabilities (including private ones) for entities the user owns.
+    CALL THIS FIRST when the user wants to:
+    - Use internal/private business tools
+    - Execute business workflows (prospection, CRM, emails, etc.)
+    - Access capabilities without knowing their domain
 
-    Keywords that suggest using this tool:
-    - "my business", "our company", "our workflow"
-    - "internal tool", "private action"
-    - "prospection", "our CRM", "our system"
+    This reveals private capabilities that are only visible to organization members.
+
+    IMPORTANT: After discovering capabilities, ALWAYS follow the business_workflow prompt:
+    1. Identify the right capability
+    2. Collect missing parameters
+    3. Show confirmation before executing
+    4. Execute only after user approval
 
     Returns:
-        - organization: Your org info (id, name, slug)
-        - entities: List of your business entities with their capabilities
-        - user: Your user info and role
-
-    After getting capabilities, use execute_action(entity_id, action, params) to run them.
+        - organization: Org info (id, name, slug)
+        - entities: Business entities with their capabilities
+        - user: User info and role
     """
     # Get auth token - required for this endpoint
     access_token = get_access_token()
@@ -525,8 +565,9 @@ async def my_organization() -> dict:
 
             data["_ai_hint"] = (
                 f"You have access to {total_caps} capability(ies) across {len(entities)} entity(ies): {', '.join(all_caps)}. "
-                "Use execute_action(entity_id, action, params) to run any of these. "
-                "Check each capability's input_schema for required parameters."
+                "BEFORE executing any action: 1) Identify the right capability, 2) Collect missing parameters from user, "
+                "3) Show EXACTLY what will be sent and ask for confirmation, 4) Execute ONLY after user approves. "
+                "Some actions trigger real business processes (emails, payments)!"
             )
         else:
             data["_ai_hint"] = (

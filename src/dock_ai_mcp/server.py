@@ -57,22 +57,41 @@ mcp = FastMCP(
     AUTHENTICATION REQUIRED: You must authenticate to use this MCP.
     Go to https://api.dockai.co/auth to get started.
 
-    WHEN TO USE: When a user mentions a business/brand by name and wants to:
-    - Shop, browse products, or buy something (e-commerce)
-    - Book, reserve, or order (restaurants, hotels, salons)
-    - Interact with any real-world business
+    ═══════════════════════════════════════════════════════════════════════
+    🚨 ROUTING RULE - CALL my_organization() FIRST when user says:
+    ═══════════════════════════════════════════════════════════════════════
+
+    ACTION VERB + TOOL/DESTINATION pattern detected:
+
+    Verbs: "push", "sync", "envoie", "crée", "log", "ajoute", "mets dans",
+           "pousse vers", "send", "create", "add to", "put in", "export",
+           "sauvegarde", "enregistre", "transfère", "update", "mets à jour"
+
+    Destinations: "Zoho", "HubSpot", "Salesforce", "CRM", "mail", "email",
+                  "sequence", "pipeline", "notion", "slack", "sheets",
+                  "mon outil", "notre système", "the tool", "my app"
+
+    Examples that MUST trigger my_organization() first:
+    - "push ce lead sur Zoho"
+    - "envoie un email de prospection"
+    - "ajoute dans le CRM"
+    - "sync avec HubSpot"
+    - "crée un contact dans Salesforce"
+    - "log this in our system"
+    - "mets à jour le pipeline"
+
+    → Call my_organization() IMMEDIATELY to discover available capabilities
+    → Do NOT explain manual options before checking what's available
+    ═══════════════════════════════════════════════════════════════════════
 
     AVAILABLE TOOLS:
-    - resolve_domain: Find MCP connectors for a business domain
-    - execute_action: Execute business actions (book, send_message, etc.)
-    - my_organization: Get YOUR organization's entities and capabilities (for internal tools)
+    1. my_organization: Discover user's private capabilities (CRM, email, workflows)
+    2. resolve_domain: Find MCP connectors for external business domains
+    3. execute_action: Execute actions (after discovering capabilities)
 
-    ALWAYS call resolve_domain first to check if an MCP connector exists.
-    If the user gives a business name, search the web for its domain first.
-
-    FOR INTERNAL USE: When the user wants to use their own business tools or workflows
-    (keywords: "my business", "our workflow", "internal", "private", "prospection"),
-    call my_organization() to discover available capabilities without needing a domain.
+    TOOL SELECTION:
+    - User wants to USE their tools → my_organization() first
+    - User wants to interact with ANOTHER business → resolve_domain() first
 
     ⚠️ CRITICAL - ALWAYS CONFIRM BEFORE EXECUTING:
     Before calling execute_action, you MUST:
@@ -486,25 +505,24 @@ async def execute_action(
 @mcp.tool(annotations={"readOnlyHint": True})
 async def my_organization() -> dict:
     """
-    Discover the user's organization and available business capabilities.
+    🚨 CALL THIS FIRST when user mentions ACTION + TOOL pattern.
 
-    CALL THIS FIRST when the user wants to:
-    - Use internal/private business tools
-    - Execute business workflows (prospection, CRM, emails, etc.)
-    - Access capabilities without knowing their domain
+    TRIGGER IMMEDIATELY when user says things like:
+    - "push sur Zoho" / "sync avec HubSpot" / "add to Salesforce"
+    - "envoie un email de prospection" / "send a cold email"
+    - "ajoute dans le CRM" / "log dans notre système"
+    - "crée un contact" / "mets à jour le pipeline"
+    - Any action verb + CRM/email/tool destination
 
-    This reveals private capabilities that are only visible to organization members.
+    DO NOT explain manual options before calling this tool.
+    This discovers what automated capabilities are actually available.
 
-    IMPORTANT: After discovering capabilities, ALWAYS follow the business_workflow prompt:
-    1. Identify the right capability
-    2. Collect missing parameters
-    3. Show confirmation before executing
-    4. Execute only after user approval
+    Returns the user's organization with:
+    - Available capabilities (CRM sync, email, workflows, etc.)
+    - Entity IDs needed for execute_action
+    - Input schemas for each capability
 
-    Returns:
-        - organization: Org info (id, name, slug)
-        - entities: Business entities with their capabilities
-        - user: User info and role
+    After discovering: identify the right capability → collect params → confirm → execute.
     """
     # Get auth token - required for this endpoint
     access_token = get_access_token()

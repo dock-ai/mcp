@@ -158,13 +158,16 @@ class DockAIOAuthProvider(OAuthProvider):
         else:  # refresh
             exp = now + REFRESH_TOKEN_EXPIRY
 
+        # Normalize issuer (remove trailing slash for consistency)
+        issuer = str(self.base_url).rstrip("/")
+
         payload = {
             "sub": user_id,
             "email": user_email,
             "client_id": client_id,
             "scope": " ".join(scopes) if scopes else None,
             "type": token_type,
-            "iss": str(self.base_url),
+            "iss": issuer,
             "iat": int(now.timestamp()),
             "exp": int(exp.timestamp()),
         }

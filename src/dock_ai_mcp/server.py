@@ -494,6 +494,27 @@ async def execute_action(
             logger.error(f"Failed to parse API response: {e}")
             return {"error": "Invalid response from API", "success": False}
 
+        # Check if action requires confirmation (email verification)
+        if data.get("status") == "pending_confirmation":
+            return {
+                "success": True,
+                "status": "pending_confirmation",
+                "action": action,
+                "message": data.get("message", "This action requires confirmation."),
+                "expires_in": data.get("expires_in"),
+                "_ai_hint": data.get("_ai_hint", "A confirmation email has been sent to the user. They must confirm before the action executes."),
+            }
+
+        # Check if the response indicates success with result
+        if data.get("success") is True:
+            return {
+                "success": True,
+                "action": action,
+                "result": data.get("result", {}),
+                "_ai_hint": data.get("_ai_hint", f"Action '{action}' executed successfully. Present the result to the user."),
+            }
+
+        # Fallback for other success responses
         return {
             "success": True,
             "action": action,

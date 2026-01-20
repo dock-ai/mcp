@@ -4,21 +4,24 @@ OAuth Provider for Dock AI MCP
 Implements OAuth 2.1 Authorization Server with:
 - Dynamic Client Registration (DCR)
 - Authorization Code Flow with PKCE
-- Supabase token passthrough (no custom JWTs)
+- MCP-signed JWTs (independent from Supabase tokens)
 - All DB operations delegated to dockai-api
 
-The MCP server acts as an OAuth bridge:
-- User authenticates via Supabase on dockai-api
-- Supabase tokens are passed through to the MCP client
-- dockai-api validates Supabase tokens on API requests
+The MCP server generates its own JWTs:
+- User authenticates via Supabase on dockai-api (initial auth only)
+- MCP generates independent JWTs with user_id/email
+- MCP tokens can be refreshed without Supabase
+- dockai-api validates both MCP JWTs and Supabase JWTs
 """
 
 import logging
+import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import httpx
+import jwt  # PyJWT
 from pydantic import AnyUrl
 
 from fastmcp.server.auth import AccessToken, OAuthProvider
@@ -36,7 +39,7 @@ REFRESH_TOKEN_EXPIRY = timedelta(days=30)
 
 
 class RefreshToken:
-    """Refresh token model with Supabase refresh token for token passthrough."""
+    """Refresh token model for MCP-signed tokens (independent of Supabase)."""
 
     def __init__(
         self,
@@ -46,7 +49,6 @@ class RefreshToken:
         user_email: str | None,
         scopes: list[str],
         expires_at: int | None,
-        supabase_refresh_token: str | None = None,
     ) -> None:
         self.token = token
         self.client_id = client_id
@@ -54,7 +56,6 @@ class RefreshToken:
         self.user_email = user_email
         self.scopes = scopes
         self.expires_at = expires_at
-        self.supabase_refresh_token = supabase_refresh_token
 
 
 class AuthorizationCode(SDKAuthorizationCode):
@@ -138,6 +139,47 @@ class DockAIOAuthProvider(OAuthProvider):
         except (httpx.ConnectError, httpx.TimeoutException) as e:
             logger.error(f"API request error: {method} {endpoint} -> {type(e).__name__}: {e}")
             return None
+
+    # ==================== JWT Generation ====================
+
+    def _generate_mcp_jwt(
+        self,
+        user_id: str,
+        user_email: str | None,
+        client_id: str,
+        scopes: list[str],
+        token_type: str,  # "access" or "refresh"
+    ) -> tuple[str, datetime]:
+        """Generate MCP-signed JWT instead of passing through Supabase token."""
+        now = datetime.now(timezone.utc)
+
+        if token_type == "access":
+            exp = now + ACCESS_TOKEN_EXPIRY
+        else:  # refresh
+            exp = now + REFRESH_TOKEN_EXPIRY
+
+        payload = {
+            "sub": user_id,
+            "email": user_email,
+            "client_id": client_id,
+            "scope": " ".join(scopes) if scopes else None,
+            "type": token_type,
+            "iss": str(self.base_url),
+            "iat": int(now.timestamp()),
+            "exp": int(exp.timestamp()),
+        }
+
+        private_key = os.environ.get("MCP_JWT_PRIVATE_KEY")
+        if not private_key:
+            raise RuntimeError("MCP_JWT_PRIVATE_KEY not configured")
+
+        # Handle PEM key formatting (env vars often have escaped newlines)
+        if "\\n" in private_key:
+            private_key = private_key.replace("\\n", "\n")
+
+        token = jwt.encode(payload, private_key, algorithm="RS256")
+
+        return token, exp
 
     # ==================== Client Management ====================
 
@@ -288,47 +330,35 @@ class DockAIOAuthProvider(OAuthProvider):
         authorization_code: AuthorizationCode,
     ) -> OAuthToken:
         """
-        Exchange authorization code for Supabase tokens.
+        Exchange authorization code for MCP-signed tokens.
 
-        This is the key simplification: we pass through Supabase tokens instead
-        of creating our own JWTs. dockai-api will validate Supabase tokens directly.
+        Generates independent JWTs signed by MCP server instead of passing
+        through Supabase tokens. This avoids refresh token conflicts.
         """
         # Note: PKCE verification is handled by the SDK before this method is called
 
         scopes = authorization_code.scopes
         scope_str = " ".join(scopes) if scopes else None
 
-        # Use Supabase access token directly (passthrough)
-        access_token = authorization_code.supabase_access_token
+        # Generate MCP-signed access token
+        access_token, access_exp = self._generate_mcp_jwt(
+            user_id=authorization_code.user_id,
+            user_email=authorization_code.user_email,
+            client_id=authorization_code.client_id,
+            scopes=scopes,
+            token_type="access",
+        )
 
-        # Store Supabase refresh token in our DB for later refresh operations
-        # We use a custom token identifier that maps to the Supabase refresh token
-        refresh_token_id = secrets.token_urlsafe(32)
+        # Generate MCP-signed refresh token
+        refresh_token, refresh_exp = self._generate_mcp_jwt(
+            user_id=authorization_code.user_id,
+            user_email=authorization_code.user_email,
+            client_id=authorization_code.client_id,
+            scopes=scopes,
+            token_type="refresh",
+        )
 
-        now = datetime.now(timezone.utc)
-        refresh_expires = now + REFRESH_TOKEN_EXPIRY
-
-        # Store refresh token mapping (our ID -> Supabase refresh token)
-        if authorization_code.supabase_refresh_token:
-            await self._api_request(
-                "POST",
-                "/api/oauth/tokens",
-                json_data={
-                    "token": refresh_token_id,
-                    "token_type": "refresh",
-                    "client_id": authorization_code.client_id,
-                    "user_id": authorization_code.user_id,
-                    "user_email": authorization_code.user_email,
-                    "scope": scope_str,
-                    "expires_at": refresh_expires.isoformat(),
-                    # Store Supabase refresh token for later use
-                    "supabase_refresh_token": authorization_code.supabase_refresh_token,
-                },
-            )
-
-        # Store access token with client_id for MCP client tracking
-        # This allows us to identify which MCP client made each request
-        access_expires = now + ACCESS_TOKEN_EXPIRY
+        # Store access token for tracking (which MCP client made the request)
         await self._api_request(
             "POST",
             "/api/oauth/tokens",
@@ -339,7 +369,23 @@ class DockAIOAuthProvider(OAuthProvider):
                 "user_id": authorization_code.user_id,
                 "user_email": authorization_code.user_email,
                 "scope": scope_str,
-                "expires_at": access_expires.isoformat(),
+                "expires_at": access_exp.isoformat(),
+                # No supabase_refresh_token - MCP tokens are independent
+            },
+        )
+
+        # Store refresh token for tracking and validation
+        await self._api_request(
+            "POST",
+            "/api/oauth/tokens",
+            json_data={
+                "token": refresh_token,
+                "token_type": "refresh",
+                "client_id": authorization_code.client_id,
+                "user_id": authorization_code.user_id,
+                "user_email": authorization_code.user_email,
+                "scope": scope_str,
+                "expires_at": refresh_exp.isoformat(),
             },
         )
 
@@ -355,49 +401,56 @@ class DockAIOAuthProvider(OAuthProvider):
         return OAuthToken(
             access_token=access_token,
             token_type="Bearer",
-            expires_in=int(ACCESS_TOKEN_EXPIRY.total_seconds()),  # Supabase default is 1 hour
+            expires_in=int(ACCESS_TOKEN_EXPIRY.total_seconds()),
             scope=scope_str,
-            refresh_token=refresh_token_id if authorization_code.supabase_refresh_token else None,
+            refresh_token=refresh_token,
         )
 
     # ==================== Token Validation ====================
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         """
-        Validate Supabase access token by delegating to dockai-api.
+        Validate MCP-signed JWT locally using public key.
 
-        Calls /api/oauth/validate-token which verifies the JWT signature
-        and returns the claims if valid.
+        No network calls needed - fast local validation.
         """
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.api_base}/api/oauth/validate-token",
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=10.0,
-                )
+            public_key = os.environ.get("MCP_JWT_PUBLIC_KEY")
+            if not public_key:
+                logger.error("MCP_JWT_PUBLIC_KEY not configured")
+                return None
 
-                if response.status_code != 200:
-                    logger.debug(f"Token validation failed: {response.status_code}")
-                    return None
+            # Handle PEM key formatting (env vars often have escaped newlines)
+            if "\\n" in public_key:
+                public_key = public_key.replace("\\n", "\n")
 
-                result = response.json()
+            claims = jwt.decode(
+                token,
+                public_key,
+                algorithms=["RS256"],
+                issuer=str(self.base_url),
+            )
 
-                if not result.get("valid"):
-                    return None
+            # Verify that it's an access token
+            if claims.get("type") != "access":
+                logger.debug("Token is not an access token")
+                return None
 
-                return AccessToken(
-                    token=token,
-                    client_id="",  # Supabase tokens don't have client_id
-                    scopes=[],  # Supabase uses role-based access, not OAuth scopes
-                    expires_at=result.get("exp"),
-                    claims={
-                        "sub": result.get("sub"),
-                        "email": result.get("email"),
-                    },
-                )
-        except (httpx.ConnectError, httpx.TimeoutException) as e:
-            logger.error(f"Token validation request failed: {e}")
+            return AccessToken(
+                token=token,
+                client_id=claims.get("client_id", ""),
+                scopes=claims.get("scope", "").split() if claims.get("scope") else [],
+                expires_at=claims.get("exp"),
+                claims={
+                    "sub": claims.get("sub"),
+                    "email": claims.get("email"),
+                },
+            )
+        except jwt.ExpiredSignatureError:
+            logger.debug("Token has expired")
+            return None
+        except jwt.InvalidTokenError as e:
+            logger.debug(f"JWT validation failed: {e}")
             return None
         except Exception as e:
             logger.debug(f"Failed to validate token: {e}")
@@ -410,48 +463,68 @@ class DockAIOAuthProvider(OAuthProvider):
         client: OAuthClientInformationFull,
         refresh_token: str,
     ) -> RefreshToken | None:
-        """Load refresh token from dockai-api."""
+        """
+        Load and validate refresh token.
+
+        For MCP-signed JWTs, we validate locally first, then check DB for revocation.
+        """
+        # First, validate the JWT locally
+        try:
+            public_key = os.environ.get("MCP_JWT_PUBLIC_KEY")
+            if not public_key:
+                logger.error("MCP_JWT_PUBLIC_KEY not configured")
+                return None
+
+            # Handle PEM key formatting
+            if "\\n" in public_key:
+                public_key = public_key.replace("\\n", "\n")
+
+            claims = jwt.decode(
+                refresh_token,
+                public_key,
+                algorithms=["RS256"],
+                issuer=str(self.base_url),
+            )
+
+            # Verify it's a refresh token
+            if claims.get("type") != "refresh":
+                logger.debug("Token is not a refresh token")
+                return None
+
+            # Verify client matches
+            token_client_id = claims.get("client_id", "")
+            if not secrets.compare_digest(token_client_id, client.client_id):
+                logger.warning("Client ID mismatch in refresh token")
+                return None
+
+        except jwt.ExpiredSignatureError:
+            logger.info("Refresh token expired")
+            return None
+        except jwt.InvalidTokenError as e:
+            logger.debug(f"Refresh token JWT validation failed: {e}")
+            return None
+
+        # Check if token has been revoked in DB
         result = await self._api_request(
             "GET",
             "/api/oauth/tokens",
             params={"token": refresh_token},
         )
 
-        if not result or result.get("error"):
+        # If token not in DB or revoked, reject it
+        if not result or result.get("error") or result.get("revoked_at"):
+            logger.debug("Refresh token not found in DB or revoked")
             return None
 
-        # Verify it's a refresh token
-        if result.get("token_type") != "refresh":
-            return None
-
-        # Verify client matches (timing-safe comparison)
-        result_client_id = result.get("client_id", "")
-        if not secrets.compare_digest(result_client_id, client.client_id):
-            logger.warning("Client ID mismatch in refresh token")
-            return None
-
-        # Parse and validate expiration
-        try:
-            expires_at = datetime.fromisoformat(result["expires_at"].replace("Z", "+00:00"))
-        except (ValueError, KeyError) as e:
-            logger.error(f"Invalid expires_at in refresh token: {e}")
-            return None
-
-        # Check if refresh token is expired
-        if datetime.now(timezone.utc) >= expires_at:
-            logger.info("Refresh token expired")
-            return None
-
-        scopes = result.get("scope", "").split() if result.get("scope") else []
+        scopes = claims.get("scope", "").split() if claims.get("scope") else []
 
         return RefreshToken(
-            token=result["token"],
-            client_id=result["client_id"],
-            user_id=result["user_id"],
-            user_email=result.get("user_email"),
+            token=refresh_token,
+            client_id=claims.get("client_id", ""),
+            user_id=claims.get("sub", ""),
+            user_email=claims.get("email"),
             scopes=scopes,
-            expires_at=int(expires_at.timestamp()),
-            supabase_refresh_token=result.get("supabase_refresh_token"),
+            expires_at=claims.get("exp"),
         )
 
     async def exchange_refresh_token(
@@ -461,39 +534,77 @@ class DockAIOAuthProvider(OAuthProvider):
         scopes: list[str],
     ) -> OAuthToken:
         """
-        Exchange refresh token for new Supabase tokens.
+        Exchange refresh token for new MCP-signed tokens.
 
-        Delegates to dockai-api /api/oauth/refresh which handles:
-        - Loading Supabase refresh token from DB
-        - Calling Supabase to refresh
-        - Storing new tokens
-        - Revoking old refresh token
+        Generates new JWTs directly - no Supabase call needed!
+        This is the key improvement: refresh is now independent.
         """
         final_scopes = scopes if scopes else refresh_token.scopes
+        scope_str = " ".join(final_scopes) if final_scopes else None
 
-        # Single API call to dockai-api - all logic is centralized there
-        result = await self._api_request(
+        # Generate new MCP-signed access token
+        new_access_token, access_exp = self._generate_mcp_jwt(
+            user_id=refresh_token.user_id,
+            user_email=refresh_token.user_email,
+            client_id=refresh_token.client_id,
+            scopes=final_scopes,
+            token_type="access",
+        )
+
+        # Generate new MCP-signed refresh token (rotation)
+        new_refresh_token, refresh_exp = self._generate_mcp_jwt(
+            user_id=refresh_token.user_id,
+            user_email=refresh_token.user_email,
+            client_id=refresh_token.client_id,
+            scopes=final_scopes,
+            token_type="refresh",
+        )
+
+        # Store new access token
+        await self._api_request(
             "POST",
-            "/api/oauth/refresh",
+            "/api/oauth/tokens",
             json_data={
-                "refresh_token": refresh_token.token,
+                "token": new_access_token,
+                "token_type": "access",
                 "client_id": refresh_token.client_id,
+                "user_id": refresh_token.user_id,
+                "user_email": refresh_token.user_email,
+                "scope": scope_str,
+                "expires_at": access_exp.isoformat(),
             },
         )
 
-        if not result or result.get("error"):
-            error_msg = result.get("error", "Unknown error") if result else "API request failed"
-            logger.error(f"Token refresh failed: {error_msg}")
-            raise RuntimeError(f"Token refresh failed: {error_msg}")
+        # Revoke old refresh token
+        await self._api_request(
+            "PATCH",
+            "/api/oauth/tokens",
+            json_data={"token": refresh_token.token},
+        )
+
+        # Store new refresh token
+        await self._api_request(
+            "POST",
+            "/api/oauth/tokens",
+            json_data={
+                "token": new_refresh_token,
+                "token_type": "refresh",
+                "client_id": refresh_token.client_id,
+                "user_id": refresh_token.user_id,
+                "user_email": refresh_token.user_email,
+                "scope": scope_str,
+                "expires_at": refresh_exp.isoformat(),
+            },
+        )
 
         logger.info(f"Refresh token exchange successful for user {refresh_token.user_id[:8]}...")
 
         return OAuthToken(
-            access_token=result["access_token"],
-            token_type=result.get("token_type", "Bearer"),
-            expires_in=result.get("expires_in", 3600),
-            scope=" ".join(final_scopes),
-            refresh_token=result.get("refresh_token"),
+            access_token=new_access_token,
+            token_type="Bearer",
+            expires_in=int(ACCESS_TOKEN_EXPIRY.total_seconds()),
+            scope=scope_str,
+            refresh_token=new_refresh_token,
         )
 
     # ==================== Token Revocation ====================

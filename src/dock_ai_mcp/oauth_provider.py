@@ -427,11 +427,14 @@ class DockAIOAuthProvider(OAuthProvider):
             if "\\n" in public_key:
                 public_key = public_key.replace("\\n", "\n")
 
+            # Normalize issuer (must match what's in the token)
+            expected_issuer = str(self.base_url).rstrip("/")
+
             claims = jwt.decode(
                 token,
                 public_key,
                 algorithms=["RS256"],
-                issuer=str(self.base_url),
+                issuer=expected_issuer,
             )
 
             # Verify that it's an access token
@@ -482,11 +485,14 @@ class DockAIOAuthProvider(OAuthProvider):
             if "\\n" in public_key:
                 public_key = public_key.replace("\\n", "\n")
 
+            # Normalize issuer (must match what's in the token)
+            expected_issuer = str(self.base_url).rstrip("/")
+
             claims = jwt.decode(
                 refresh_token,
                 public_key,
                 algorithms=["RS256"],
-                issuer=str(self.base_url),
+                issuer=expected_issuer,
             )
 
             # Verify it's a refresh token

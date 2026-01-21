@@ -44,7 +44,9 @@ from .oauth_provider import DockAIOAuthProvider
 # Environment variables
 API_BASE = os.environ.get("DOCKAI_API_URL", "https://api.dockai.co")
 INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY")
-MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.dockai.co")
+# Base URL must include /mcp path for RFC 8414 path-aware OAuth discovery
+# Inspector looks for /.well-known/oauth-authorization-server/mcp
+MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.dockai.co/mcp")
 IS_PRODUCTION = (
     os.environ.get("VERCEL_ENV") == "production"
     or os.environ.get("NODE_ENV") == "production"

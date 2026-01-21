@@ -211,6 +211,8 @@ class DockAIOAuthProvider(OAuthProvider):
             token_endpoint_auth_method=result.get(
                 "token_endpoint_auth_method", "client_secret_post"
             ),
+            # Include scope for authorization validation
+            scope=result.get("scope"),
         )
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
@@ -230,6 +232,8 @@ class DockAIOAuthProvider(OAuthProvider):
                 "response_types": client_info.response_types or ["code"],
                 "token_endpoint_auth_method": client_info.token_endpoint_auth_method
                 or "client_secret_post",
+                # Include scope from client registration (Claude sends "claudeai")
+                "scope": client_info.scope,
             },
         )
 

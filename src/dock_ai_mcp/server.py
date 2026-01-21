@@ -661,25 +661,6 @@ async def health_check(request):
 # so we add it manually.
 
 
-# ============== CORS FIX FOR TOKEN ENDPOINT ==============
-# MCP SDK doesn't include Authorization header in CORS allowed headers
-# but MCP Inspector uses client_secret_basic which sends Authorization header
-
-
-@mcp.custom_route("/token", methods=["OPTIONS"])
-async def token_cors_preflight(request):
-    """Handle CORS preflight for /token endpoint with Authorization header."""
-    from starlette.responses import Response
-
-    return Response(
-        status_code=200,
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Accept, Accept-Language, Content-Language, Content-Type, Authorization, mcp-protocol-version",
-            "Access-Control-Max-Age": "600",
-        },
-    )
 
 
 @mcp.custom_route("/.well-known/oauth-authorization-server/mcp", methods=["GET", "OPTIONS"])
@@ -731,12 +712,39 @@ async def oauth_metadata_path_aware(request):
 
 def main():
     """Entry point for the MCP server."""
+    import uvicorn
+    from starlette.middleware import Middleware
+    from starlette.middleware.cors import CORSMiddleware
+
     # Railway/persistent: stateless_http=False (maintains sessions)
     # Vercel/serverless: stateless_http=True (no session state)
     stateless = IS_SERVERLESS and not IS_RAILWAY
 
+    # CORS middleware for browser-based clients (MCP Inspector)
+    # MCP SDK doesn't include Authorization header by default
+    cors_middleware = [
+        Middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+            allow_headers=[
+                "mcp-protocol-version",
+                "mcp-session-id",
+                "Authorization",
+                "Content-Type",
+                "Accept",
+            ],
+            expose_headers=["mcp-session-id"],
+        )
+    ]
+
     logger.info(f"Starting Dock AI Gateway on port {PORT} (stateless={stateless})")
-    mcp.run(transport="http", host="0.0.0.0", port=PORT, stateless_http=stateless)
+
+    # Create app with CORS middleware
+    app = mcp.http_app(middleware=cors_middleware, stateless_http=stateless)
+
+    # Run with uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
 
 
 if __name__ == "__main__":

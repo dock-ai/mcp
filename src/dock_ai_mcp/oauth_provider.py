@@ -49,6 +49,7 @@ class RefreshToken:
         user_email: str | None,
         scopes: list[str],
         expires_at: int | None,
+        org_id: str | None = None,  # Organization ID for v2 dynamic tools
     ) -> None:
         self.token = token
         self.client_id = client_id
@@ -56,6 +57,7 @@ class RefreshToken:
         self.user_email = user_email
         self.scopes = scopes
         self.expires_at = expires_at
+        self.org_id = org_id
 
 
 class AuthorizationCode(SDKAuthorizationCode):
@@ -64,6 +66,7 @@ class AuthorizationCode(SDKAuthorizationCode):
     # Additional fields for user info (not in SDK)
     user_id: str
     user_email: str | None = None
+    org_id: str | None = None  # Organization ID for v2 dynamic tools
     # Supabase tokens passed through from dockai-api
     supabase_access_token: str
     supabase_refresh_token: str | None = None
@@ -149,6 +152,7 @@ class DockAIOAuthProvider(OAuthProvider):
         client_id: str,
         scopes: list[str],
         token_type: str,  # "access" or "refresh"
+        org_id: str | None = None,  # Organization ID for v2 dynamic tools
     ) -> tuple[str, datetime]:
         """Generate MCP-signed JWT instead of passing through Supabase token."""
         now = datetime.now(timezone.utc)
@@ -164,6 +168,7 @@ class DockAIOAuthProvider(OAuthProvider):
         payload = {
             "sub": user_id,
             "email": user_email,
+            "org_id": org_id,  # v2: Organization ID for dynamic tools
             "client_id": client_id,
             "scope": " ".join(scopes) if scopes else None,
             "type": token_type,
@@ -316,6 +321,7 @@ class DockAIOAuthProvider(OAuthProvider):
             client_id=result["client_id"],
             user_id=result["user_id"],
             user_email=result.get("user_email"),
+            org_id=result.get("org_id"),  # v2: Organization ID for dynamic tools
             redirect_uri=AnyUrl(result["redirect_uri"]),
             scopes=scopes,
             code_challenge=result.get("code_challenge") or "",
@@ -350,6 +356,7 @@ class DockAIOAuthProvider(OAuthProvider):
             client_id=authorization_code.client_id,
             scopes=scopes,
             token_type="access",
+            org_id=authorization_code.org_id,  # v2: Organization ID
         )
 
         # Generate MCP-signed refresh token
@@ -359,6 +366,7 @@ class DockAIOAuthProvider(OAuthProvider):
             client_id=authorization_code.client_id,
             scopes=scopes,
             token_type="refresh",
+            org_id=authorization_code.org_id,  # v2: Organization ID
         )
 
         # Store access token for tracking (which MCP client made the request)
@@ -450,6 +458,7 @@ class DockAIOAuthProvider(OAuthProvider):
                 claims={
                     "sub": claims.get("sub"),
                     "email": claims.get("email"),
+                    "org_id": claims.get("org_id"),  # v2: Organization ID
                 },
             )
         except jwt.ExpiredSignatureError:
@@ -534,6 +543,7 @@ class DockAIOAuthProvider(OAuthProvider):
             user_email=claims.get("email"),
             scopes=scopes,
             expires_at=claims.get("exp"),
+            org_id=claims.get("org_id"),  # v2: Organization ID
         )
 
     async def exchange_refresh_token(
@@ -558,6 +568,7 @@ class DockAIOAuthProvider(OAuthProvider):
             client_id=refresh_token.client_id,
             scopes=final_scopes,
             token_type="access",
+            org_id=refresh_token.org_id,  # v2: Organization ID
         )
 
         # Generate new MCP-signed refresh token (rotation)
@@ -567,6 +578,7 @@ class DockAIOAuthProvider(OAuthProvider):
             client_id=refresh_token.client_id,
             scopes=final_scopes,
             token_type="refresh",
+            org_id=refresh_token.org_id,  # v2: Organization ID
         )
 
         # Store new access token

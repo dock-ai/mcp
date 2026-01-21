@@ -44,9 +44,8 @@ from .oauth_provider import DockAIOAuthProvider
 # Environment variables
 API_BASE = os.environ.get("DOCKAI_API_URL", "https://api.dockai.co")
 INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY")
-# Base URL must include /mcp path for RFC 8414 path-aware OAuth discovery
-# Inspector looks for /.well-known/oauth-authorization-server/mcp
-MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.dockai.co/mcp")
+# Base URL for OAuth (without /mcp path - OAuth routes are at root)
+MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.dockai.co")
 IS_PRODUCTION = (
     os.environ.get("VERCEL_ENV") == "production"
     or os.environ.get("NODE_ENV") == "production"
@@ -654,6 +653,56 @@ async def health_check(request):
     from starlette.responses import JSONResponse
 
     return JSONResponse({"status": "ok", "version": "2.0.0"})
+
+
+# ============== PATH-AWARE OAUTH DISCOVERY ==============
+# MCP Inspector and other clients look for /.well-known/oauth-authorization-server/mcp
+# per RFC 8414 path-aware discovery. FastMCP doesn't create this automatically,
+# so we add it manually.
+
+
+@mcp.custom_route("/.well-known/oauth-authorization-server/mcp", methods=["GET", "OPTIONS"])
+async def oauth_metadata_path_aware(request):
+    """Path-aware OAuth metadata for /mcp endpoint (RFC 8414)."""
+    from starlette.responses import JSONResponse
+
+    # Build metadata matching the root endpoint but with path-aware issuer
+    base_url = MCP_BASE_URL.rstrip("/")
+
+    metadata = {
+        "issuer": f"{base_url}/",
+        "authorization_endpoint": f"{base_url}/authorize",
+        "token_endpoint": f"{base_url}/token",
+        "registration_endpoint": f"{base_url}/register",
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "token_endpoint_auth_methods_supported": [
+            "client_secret_post",
+            "client_secret_basic",
+        ],
+        "revocation_endpoint": f"{base_url}/revoke",
+        "revocation_endpoint_auth_methods_supported": [
+            "client_secret_post",
+            "client_secret_basic",
+        ],
+        "code_challenge_methods_supported": ["S256"],
+    }
+
+    # Handle CORS preflight
+    if request.method == "OPTIONS":
+        return JSONResponse(
+            {},
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            },
+        )
+
+    return JSONResponse(
+        metadata,
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
 
 
 # ============== ENTRY POINT ==============

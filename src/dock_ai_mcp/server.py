@@ -28,7 +28,7 @@ from .oauth_provider import DockAIOAuthProvider
 # Environment variables
 API_BASE = os.environ.get("DOCKAI_API_URL", "https://api.dockai.co")
 INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY")
-MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.dockai.co")
+MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://connect.dockai.co")
 IS_PRODUCTION = os.environ.get("VERCEL_ENV") == "production" or os.environ.get("NODE_ENV") == "production"
 
 # Validate required environment variables in production
@@ -139,7 +139,7 @@ I need step-by-step instructions for:
 - ChatGPT (OpenAI)
 - Le Chat (Mistral)
 
-The MCP server URL is: https://mcp.dockai.co"""
+The MCP server URL is: https://connect.dockai.co"""
 
 
 @mcp.prompt()

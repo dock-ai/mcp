@@ -12,7 +12,7 @@
   "remotes": [
     {
       "type": "streamable-http",
-      "url": "https://mcp.dockai.co/mcp"
+      "url": "https://connect.dockai.co/mcp"
     }
   ]
 }

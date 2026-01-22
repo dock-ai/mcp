@@ -18,5 +18,5 @@ All notable changes to the Dock AI MCP server will be documented in this file.
 ### Technical
 
 - Streamable HTTP transport
-- Hosted version at `https://mcp.dockai.co/mcp`
+- Hosted version at `https://connect.dockai.co/mcp`
 - Self-hosting support via `uvx dock-ai-mcp`

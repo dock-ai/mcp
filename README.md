@@ -8,13 +8,13 @@ Dock AI is a registry that maps businesses to their MCP connectors. This MCP ser
 
 ## Hosted Version
 
-Use the hosted version at `https://mcp.dockai.co/mcp` - no installation required.
+Use the hosted version at `https://connect.dockai.co/mcp` - no installation required.
 
 ```json
 {
   "mcpServers": {
     "dock-ai": {
-      "url": "https://mcp.dockai.co/mcp"
+      "url": "https://connect.dockai.co/mcp"
     }
   }
 }

@@ -101,7 +101,7 @@ ALLOWED_ORIGINS = [
     # Dock AI
     "https://dockai.co",
     "https://www.dockai.co",
-    "https://mcp.dockai.co",
+    "https://connect.dockai.co",
     # Claude
     "https://claude.ai",
     "https://www.claude.ai",

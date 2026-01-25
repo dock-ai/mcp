@@ -15,13 +15,11 @@ The MCP server generates its own JWTs:
 """
 
 import logging
-import os
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 import httpx
-import jwt  # PyJWT
 from pydantic import AnyUrl
 
 from fastmcp.server.auth import AccessToken, OAuthProvider
@@ -30,12 +28,15 @@ from mcp.server.auth.provider import AuthorizationParams
 from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
+from .jwt_handler import (
+    ACCESS_TOKEN_EXPIRY,
+    generate_mcp_jwt,
+    validate_access_token,
+    validate_refresh_token,
+)
+
 # Configure logging
 logger = logging.getLogger(__name__)
-
-# Token expiration settings
-ACCESS_TOKEN_EXPIRY = timedelta(hours=1)
-REFRESH_TOKEN_EXPIRY = timedelta(days=30)
 
 
 class RefreshToken:
@@ -142,52 +143,6 @@ class DockAIOAuthProvider(OAuthProvider):
         except (httpx.ConnectError, httpx.TimeoutException) as e:
             logger.error(f"API request error: {method} {endpoint} -> {type(e).__name__}: {e}")
             return None
-
-    # ==================== JWT Generation ====================
-
-    def _generate_mcp_jwt(
-        self,
-        user_id: str,
-        user_email: str | None,
-        client_id: str,
-        scopes: list[str],
-        token_type: str,  # "access" or "refresh"
-        org_id: str | None = None,  # Organization ID for v2 dynamic tools
-    ) -> tuple[str, datetime]:
-        """Generate MCP-signed JWT instead of passing through Supabase token."""
-        now = datetime.now(timezone.utc)
-
-        if token_type == "access":
-            exp = now + ACCESS_TOKEN_EXPIRY
-        else:  # refresh
-            exp = now + REFRESH_TOKEN_EXPIRY
-
-        # Normalize issuer (remove trailing slash for consistency)
-        issuer = str(self.base_url).rstrip("/")
-
-        payload = {
-            "sub": user_id,
-            "email": user_email,
-            "org_id": org_id,  # v2: Organization ID for dynamic tools
-            "client_id": client_id,
-            "scope": " ".join(scopes) if scopes else None,
-            "type": token_type,
-            "iss": issuer,
-            "iat": int(now.timestamp()),
-            "exp": int(exp.timestamp()),
-        }
-
-        private_key = os.environ.get("MCP_JWT_PRIVATE_KEY")
-        if not private_key:
-            raise RuntimeError("MCP_JWT_PRIVATE_KEY not configured")
-
-        # Handle PEM key formatting (env vars often have escaped newlines)
-        if "\\n" in private_key:
-            private_key = private_key.replace("\\n", "\n")
-
-        token = jwt.encode(payload, private_key, algorithm="RS256")
-
-        return token, exp
 
     # ==================== Client Management ====================
 
@@ -352,26 +307,33 @@ class DockAIOAuthProvider(OAuthProvider):
 
         scopes = authorization_code.scopes
         scope_str = " ".join(scopes) if scopes else None
+        issuer = str(self.base_url)
 
         # Generate MCP-signed access token
-        access_token, access_exp = self._generate_mcp_jwt(
+        access_result = generate_mcp_jwt(
             user_id=authorization_code.user_id,
             user_email=authorization_code.user_email,
             client_id=authorization_code.client_id,
             scopes=scopes,
             token_type="access",
-            org_id=authorization_code.org_id,  # v2: Organization ID
+            issuer=issuer,
+            org_id=authorization_code.org_id,
         )
+        access_token = access_result.token
+        access_exp = access_result.expires_at
 
         # Generate MCP-signed refresh token
-        refresh_token, refresh_exp = self._generate_mcp_jwt(
+        refresh_result = generate_mcp_jwt(
             user_id=authorization_code.user_id,
             user_email=authorization_code.user_email,
             client_id=authorization_code.client_id,
             scopes=scopes,
             token_type="refresh",
-            org_id=authorization_code.org_id,  # v2: Organization ID
+            issuer=issuer,
+            org_id=authorization_code.org_id,
         )
+        refresh_token = refresh_result.token
+        refresh_exp = refresh_result.expires_at
 
         # Store access token for tracking (which MCP client made the request)
         await self._api_request(
@@ -429,51 +391,23 @@ class DockAIOAuthProvider(OAuthProvider):
 
         No network calls needed - fast local validation.
         """
-        try:
-            public_key = os.environ.get("MCP_JWT_PUBLIC_KEY")
-            if not public_key:
-                logger.error("MCP_JWT_PUBLIC_KEY not configured")
-                return None
+        expected_issuer = str(self.base_url)
+        claims = validate_access_token(token, expected_issuer)
 
-            # Handle PEM key formatting (env vars often have escaped newlines)
-            if "\\n" in public_key:
-                public_key = public_key.replace("\\n", "\n")
-
-            # Normalize issuer (must match what's in the token)
-            expected_issuer = str(self.base_url).rstrip("/")
-
-            claims = jwt.decode(
-                token,
-                public_key,
-                algorithms=["RS256"],
-                issuer=expected_issuer,
-            )
-
-            # Verify that it's an access token
-            if claims.get("type") != "access":
-                logger.debug("Token is not an access token")
-                return None
-
-            return AccessToken(
-                token=token,
-                client_id=claims.get("client_id", ""),
-                scopes=claims.get("scope", "").split() if claims.get("scope") else [],
-                expires_at=claims.get("exp"),
-                claims={
-                    "sub": claims.get("sub"),
-                    "email": claims.get("email"),
-                    "org_id": claims.get("org_id"),  # v2: Organization ID
-                },
-            )
-        except jwt.ExpiredSignatureError:
-            logger.debug("Token has expired")
+        if not claims:
             return None
-        except jwt.InvalidTokenError as e:
-            logger.debug(f"JWT validation failed: {e}")
-            return None
-        except Exception as e:
-            logger.debug(f"Failed to validate token: {e}")
-            return None
+
+        return AccessToken(
+            token=token,
+            client_id=claims.client_id,
+            scopes=claims.scopes,
+            expires_at=claims.exp,
+            claims={
+                "sub": claims.sub,
+                "email": claims.email,
+                "org_id": claims.org_id,
+            },
+        )
 
     # ==================== Refresh Token ====================
 
@@ -487,43 +421,15 @@ class DockAIOAuthProvider(OAuthProvider):
 
         For MCP-signed JWTs, we validate locally first, then check DB for revocation.
         """
-        # First, validate the JWT locally
-        try:
-            public_key = os.environ.get("MCP_JWT_PUBLIC_KEY")
-            if not public_key:
-                logger.error("MCP_JWT_PUBLIC_KEY not configured")
-                return None
+        # Validate the JWT locally
+        expected_issuer = str(self.base_url)
+        claims = validate_refresh_token(
+            refresh_token,
+            expected_issuer,
+            expected_client_id=client.client_id,
+        )
 
-            # Handle PEM key formatting
-            if "\\n" in public_key:
-                public_key = public_key.replace("\\n", "\n")
-
-            # Normalize issuer (must match what's in the token)
-            expected_issuer = str(self.base_url).rstrip("/")
-
-            claims = jwt.decode(
-                refresh_token,
-                public_key,
-                algorithms=["RS256"],
-                issuer=expected_issuer,
-            )
-
-            # Verify it's a refresh token
-            if claims.get("type") != "refresh":
-                logger.debug("Token is not a refresh token")
-                return None
-
-            # Verify client matches
-            token_client_id = claims.get("client_id", "")
-            if not secrets.compare_digest(token_client_id, client.client_id):
-                logger.warning("Client ID mismatch in refresh token")
-                return None
-
-        except jwt.ExpiredSignatureError:
-            logger.info("Refresh token expired")
-            return None
-        except jwt.InvalidTokenError as e:
-            logger.debug(f"Refresh token JWT validation failed: {e}")
+        if not claims:
             return None
 
         # Check if token has been revoked in DB
@@ -538,16 +444,14 @@ class DockAIOAuthProvider(OAuthProvider):
             logger.debug("Refresh token not found in DB or revoked")
             return None
 
-        scopes = claims.get("scope", "").split() if claims.get("scope") else []
-
         return RefreshToken(
             token=refresh_token,
-            client_id=claims.get("client_id", ""),
-            user_id=claims.get("sub", ""),
-            user_email=claims.get("email"),
-            scopes=scopes,
-            expires_at=claims.get("exp"),
-            org_id=claims.get("org_id"),  # v2: Organization ID
+            client_id=claims.client_id,
+            user_id=claims.sub,
+            user_email=claims.email,
+            scopes=claims.scopes,
+            expires_at=claims.exp,
+            org_id=claims.org_id,
         )
 
     async def exchange_refresh_token(
@@ -564,26 +468,33 @@ class DockAIOAuthProvider(OAuthProvider):
         """
         final_scopes = scopes if scopes else refresh_token.scopes
         scope_str = " ".join(final_scopes) if final_scopes else None
+        issuer = str(self.base_url)
 
         # Generate new MCP-signed access token
-        new_access_token, access_exp = self._generate_mcp_jwt(
+        access_result = generate_mcp_jwt(
             user_id=refresh_token.user_id,
             user_email=refresh_token.user_email,
             client_id=refresh_token.client_id,
             scopes=final_scopes,
             token_type="access",
-            org_id=refresh_token.org_id,  # v2: Organization ID
+            issuer=issuer,
+            org_id=refresh_token.org_id,
         )
+        new_access_token = access_result.token
+        access_exp = access_result.expires_at
 
         # Generate new MCP-signed refresh token (rotation)
-        new_refresh_token, refresh_exp = self._generate_mcp_jwt(
+        refresh_result = generate_mcp_jwt(
             user_id=refresh_token.user_id,
             user_email=refresh_token.user_email,
             client_id=refresh_token.client_id,
             scopes=final_scopes,
             token_type="refresh",
-            org_id=refresh_token.org_id,  # v2: Organization ID
+            issuer=issuer,
+            org_id=refresh_token.org_id,
         )
+        new_refresh_token = refresh_result.token
+        refresh_exp = refresh_result.expires_at
 
         # Store new access token
         await self._api_request(

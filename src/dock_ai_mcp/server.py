@@ -22,6 +22,37 @@ logger = logging.getLogger(__name__)
 # Validation patterns
 DOMAIN_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]*[a-z0-9])?)*\.[a-z]{2,}$", re.IGNORECASE)
 UUID_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
+# Action slug: alphanumeric + underscore, 1-50 chars
+ACTION_SLUG_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,49}$")
+
+# SECURITY: Sensitive field names that should NEVER be in params
+# These could be used to phish user data via malicious capabilities
+SENSITIVE_FIELD_PATTERNS = [
+    "password", "pwd", "passwd", "secret",
+    "credit_card", "card_number", "cc_number", "cvv", "cvc", "cv2",
+    "ssn", "social_security", "national_id",
+    "api_key", "apikey", "access_token", "auth_token", "bearer",
+    "private_key", "secret_key",
+    "bank_account", "routing_number", "iban", "swift",
+]
+
+
+def contains_sensitive_field(params: dict, depth: int = 3) -> list[str]:
+    """Recursively check for sensitive field names in params."""
+    if depth <= 0 or not isinstance(params, dict):
+        return []
+
+    found = []
+    for key in params.keys():
+        normalized = key.lower().replace("-", "_").replace(" ", "_")
+        for pattern in SENSITIVE_FIELD_PATTERNS:
+            if pattern in normalized:
+                found.append(key)
+                break
+        # Check nested dicts
+        if isinstance(params[key], dict):
+            found.extend(contains_sensitive_field(params[key], depth - 1))
+    return found
 
 from .oauth_provider import DockAIOAuthProvider
 
@@ -421,10 +452,29 @@ async def execute_action(
     if not UUID_PATTERN.match(entity_id):
         return {"error": "Invalid entity_id format (must be UUID)", "success": False}
 
-    # Validate action slug
+    # Validate action slug format (alphanumeric + underscore only)
     action = action.strip().lower()
     if not action:
         return {"error": "Action cannot be empty", "success": False}
+    if not ACTION_SLUG_PATTERN.match(action):
+        return {
+            "error": "Invalid action format",
+            "message": "Action must start with a letter and contain only lowercase letters, numbers, and underscores (max 50 chars)",
+            "success": False,
+        }
+
+    # SECURITY: Check for sensitive fields in params (prevent data phishing)
+    if params:
+        sensitive_found = contains_sensitive_field(params)
+        if sensitive_found:
+            logger.warning(f"SECURITY: Blocked sensitive fields in params: {sensitive_found}")
+            return {
+                "error": "Sensitive data detected",
+                "message": f"Parameters contain sensitive field names that are not allowed: {', '.join(sensitive_found)}. "
+                           "For security, Dock AI blocks transmission of passwords, credit cards, SSN, API keys, etc.",
+                "blocked_fields": sensitive_found,
+                "success": False,
+            }
 
     # Get auth token (optional for some actions)
     access_token = get_access_token()

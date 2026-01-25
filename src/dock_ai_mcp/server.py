@@ -484,6 +484,24 @@ async def execute_action(
                 "success": False,
             }
 
+        if response.status_code == 402:
+            try:
+                data = response.json()
+                return {
+                    "error": data.get("error", "Usage limit exceeded"),
+                    "message": data.get("message", "Monthly execution limit reached. Please upgrade your plan."),
+                    "usage": data.get("usage"),
+                    "upgrade_url": data.get("upgrade_url", "https://business.dockai.co/biz?tab=plans"),
+                    "success": False,
+                    "_ai_hint": data.get("_ai_hint", "The business has reached their monthly execution limit. They need to upgrade their Dock AI plan to continue."),
+                }
+            except Exception:
+                return {
+                    "error": "Usage limit exceeded",
+                    "message": "The business has reached their monthly limit. They need to upgrade at https://business.dockai.co",
+                    "success": False,
+                }
+
         if response.status_code == 502:
             try:
                 data = response.json()

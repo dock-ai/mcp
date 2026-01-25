@@ -491,7 +491,7 @@ async def execute_action(
                     "error": data.get("error", "Usage limit exceeded"),
                     "message": data.get("message", "Monthly execution limit reached. Please upgrade your plan."),
                     "usage": data.get("usage"),
-                    "upgrade_url": data.get("upgrade_url", "https://business.dockai.co/biz?tab=plans"),
+                    "upgrade_url": data.get("upgrade_url", "https://business.dockai.co"),
                     "success": False,
                     "_ai_hint": data.get("_ai_hint", "The business has reached their monthly execution limit. They need to upgrade their Dock AI plan to continue."),
                 }

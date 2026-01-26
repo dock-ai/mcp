@@ -28,6 +28,7 @@ from .tools import (
     resolve_domain_handler,
     execute_action_handler,
     my_organization_handler,
+    confirm_action_handler,
 )
 
 logger = logging.getLogger(__name__)
@@ -328,6 +329,50 @@ async def my_capabilities() -> dict:
     After discovering: identify the right capability -> collect params -> confirm -> execute.
     """
     return await my_organization_handler()
+
+
+@mcp.tool(annotations={"readOnlyHint": False})
+async def confirm_action(
+    code: Annotated[
+        str,
+        Field(
+            description="The 6-digit confirmation code from the email",
+            min_length=6,
+            max_length=6,
+        ),
+    ],
+    action: Annotated[
+        str,
+        Field(
+            description="'confirm' to execute the action, 'reject' to cancel it",
+        ),
+    ] = "confirm",
+    rejection_reason: Annotated[
+        str | None,
+        Field(
+            description="Optional reason for rejection (max 500 chars)",
+            max_length=500,
+        ),
+    ] = None,
+) -> dict:
+    """
+    Confirm or reject a pending action using the code from the confirmation email.
+
+    When an action requires confirmation, the user receives an email with a 6-digit code.
+    Use this tool to confirm or reject the action using that code.
+
+    WORKFLOW:
+    1. User triggers an action that requires confirmation
+    2. User receives email with 6-digit code
+    3. User tells you the code
+    4. You call confirm_action(code=..., action="confirm")
+
+    IMPORTANT:
+    - Only the user who triggered the action can confirm it
+    - Codes expire after 1 hour
+    - Use action="reject" if the user wants to cancel
+    """
+    return await confirm_action_handler(code, action, rejection_reason)
 
 
 # ========================================

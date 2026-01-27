@@ -29,51 +29,61 @@ async def prepare_action_handler(
     Returns:
         Entity info and input_schema for the form
     """
-    # Validate entity_id format (UUID)
-    if not is_valid_uuid(entity_id):
-        return {"error": "Invalid entity_id format (must be UUID)", "success": False}
+    try:
+        # Validate entity_id format (UUID)
+        if not is_valid_uuid(entity_id):
+            return {"error": "Invalid entity_id format (must be UUID)", "success": False}
 
-    # Validate action slug format
-    action = action.strip().lower()
-    if not action:
-        return {"error": "Action cannot be empty", "success": False}
-    if not is_valid_action_slug(action):
-        return {
-            "error": "Invalid action format",
-            "success": False,
-        }
+        # Validate action slug format
+        action = action.strip().lower()
+        if not action:
+            return {"error": "Action cannot be empty", "success": False}
+        if not is_valid_action_slug(action):
+            return {
+                "error": "Invalid action format",
+                "success": False,
+            }
 
-    # Get auth token
-    access_token = get_access_token()
-    auth_token = access_token.token if access_token else None
-
-    headers = {"X-Source": "mcp"}
-    if auth_token:
-        headers["Authorization"] = f"Bearer {auth_token}"
-
-    # Fetch entity and capability info
-    async with httpx.AsyncClient() as client:
-        # Get entity info
-        response = await client.get(
-            f"{API_BASE}/api/v1/entity/{entity_id}",
-            headers=headers,
-            timeout=10.0,
-        )
-
-        if response.status_code == 404:
-            return {"error": "Entity not found", "success": False}
-
-        if response.status_code != 200:
-            return {"error": f"API error: {response.status_code}", "success": False}
-
+        # Get auth token (may be None if not authenticated)
         try:
-            data = response.json()
+            access_token = get_access_token()
+            auth_token = access_token.token if access_token else None
         except Exception as e:
-            logger.error(f"Failed to parse API response: {e}")
-            return {"error": "Invalid response from API", "success": False}
+            logger.warning(f"Could not get access token: {e}")
+            auth_token = None
 
-        entity = data.get("entity", data)
-        capabilities = data.get("capabilities", [])
+        headers = {"X-Source": "mcp"}
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+
+        logger.info(f"Fetching entity info from {API_BASE}/api/v1/entity/{entity_id}")
+
+        # Fetch entity and capability info
+        async with httpx.AsyncClient() as client:
+            # Get entity info
+            response = await client.get(
+                f"{API_BASE}/api/v1/entity/{entity_id}",
+                headers=headers,
+                timeout=10.0,
+            )
+
+            logger.info(f"API response status: {response.status_code}")
+
+            if response.status_code == 404:
+                return {"error": "Entity not found", "success": False}
+
+            if response.status_code != 200:
+                logger.error(f"API error: {response.status_code} - {response.text}")
+                return {"error": f"API error: {response.status_code}", "success": False}
+
+            try:
+                data = response.json()
+            except Exception as e:
+                logger.error(f"Failed to parse API response: {e}")
+                return {"error": "Invalid response from API", "success": False}
+
+            entity = data.get("entity", data)
+            capabilities = data.get("capabilities", [])
 
         # Find the specific capability
         capability = next(
@@ -106,4 +116,11 @@ async def prepare_action_handler(
                 "input_schema": capability.get("input_schema", {}),
             },
             "_ai_hint": f"Display the interactive form for '{action}'. The user can fill in the fields and submit.",
+        }
+
+    except Exception as e:
+        logger.error(f"Unexpected error in prepare_action_handler: {e}", exc_info=True)
+        return {
+            "error": f"Internal error: {str(e)}",
+            "success": False,
         }

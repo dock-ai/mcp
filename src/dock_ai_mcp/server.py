@@ -29,7 +29,9 @@ from .tools import (
     execute_action_handler,
     my_organization_handler,
     confirm_action_handler,
+    prepare_action_handler,
 )
+from .ui.action_form import ACTION_FORM_HTML
 
 logger = logging.getLogger(__name__)
 
@@ -373,6 +375,72 @@ async def confirm_action(
     - Use action="reject" if the user wants to cancel
     """
     return await confirm_action_handler(code, action, rejection_reason)
+
+
+# ========================================
+# MCP APPS - INTERACTIVE UI TOOLS
+# ========================================
+
+
+@mcp.tool(
+    annotations={"readOnlyHint": True},
+    meta={"ui": {"resourceUri": "ui://dock-ai/action-form"}}
+)
+async def prepare_action(
+    entity_id: Annotated[
+        str,
+        Field(
+            description="The entity ID (UUID) from resolve_domain or my_capabilities",
+            min_length=36,
+            max_length=36,
+        ),
+    ],
+    action: Annotated[
+        str,
+        Field(
+            description="The action slug (e.g., 'send_message', 'book', 'search_catalog')",
+            min_length=1,
+            max_length=50,
+        ),
+    ],
+) -> dict:
+    """
+    Prepare an interactive form for a business action.
+
+    USE THIS to show a user-friendly form instead of collecting parameters via chat.
+    The form will be displayed inline and the user can fill it out directly.
+
+    WORKFLOW:
+    1. Call resolve_domain or my_capabilities to get entity_id and available actions
+    2. Call prepare_action(entity_id, action) to show the form
+    3. User fills out the form and submits
+    4. The form automatically calls execute_action
+
+    BEST FOR:
+    - Contact forms (send_message)
+    - Booking forms (book)
+    - Search interfaces (search_catalog)
+    - Any action with multiple input fields
+
+    Returns entity info and input_schema for rendering the form.
+    """
+    return await prepare_action_handler(entity_id, action)
+
+
+# ========================================
+# MCP APPS - UI RESOURCES
+# ========================================
+
+
+@mcp.resource(
+    "ui://dock-ai/action-form",
+    name="Action Form",
+    description="Interactive form for business actions",
+    mime_type="application/vnd.mcp.app+html",
+)
+def action_form_resource() -> str:
+    """Serve the interactive action form HTML."""
+    return ACTION_FORM_HTML
 
 
 # ========================================

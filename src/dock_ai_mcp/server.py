@@ -445,7 +445,7 @@ async def prepare_action(
     "ui://dock-ai/action-form",
     name="Action Form",
     description="Interactive form for business actions",
-    mime_type="application/vnd.mcp.app+html",
+    mime_type="text/html+mcp",
 )
 def action_form_resource() -> str:
     """Serve the interactive action form HTML."""

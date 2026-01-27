@@ -98,7 +98,7 @@ async def prepare_action_handler(
                 "available_actions": [c.get("action", c.get("slug")) for c in capabilities],
             }
 
-        # Return the form data
+        # Return the form data with _meta for MCP Apps
         return {
             "success": True,
             "mode": "form",
@@ -116,6 +116,12 @@ async def prepare_action_handler(
                 "input_schema": capability.get("input_schema", {}),
             },
             "_ai_hint": f"Display the interactive form for '{action}'. The user can fill in the fields and submit.",
+            # MCP Apps: Tell the client to render the interactive form UI
+            "_meta": {
+                "ui": {
+                    "resourceUri": "ui://dock-ai/action-form"
+                }
+            },
         }
 
     except Exception as e:

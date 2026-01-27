@@ -424,7 +424,16 @@ async def prepare_action(
 
     Returns entity info and input_schema for rendering the form.
     """
-    return await prepare_action_handler(entity_id, action)
+    print(f"[PREPARE_ACTION] Called with entity_id={entity_id}, action={action}")
+    logger.warning(f"[PREPARE_ACTION] Called with entity_id={entity_id}, action={action}")
+    try:
+        result = await prepare_action_handler(entity_id, action)
+        print(f"[PREPARE_ACTION] Result: {result}")
+        return result
+    except Exception as e:
+        print(f"[PREPARE_ACTION] Error: {e}")
+        logger.error(f"[PREPARE_ACTION] Error: {e}", exc_info=True)
+        return {"error": str(e), "success": False}
 
 
 # ========================================

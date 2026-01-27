@@ -449,6 +449,8 @@ async def prepare_action(
 )
 def action_form_resource() -> str:
     """Serve the interactive action form HTML."""
+    print("[RESOURCE] action_form_resource called!")
+    logger.warning("[RESOURCE] action_form_resource called!")
     return ACTION_FORM_HTML
 
 
